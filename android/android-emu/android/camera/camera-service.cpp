@@ -34,6 +34,7 @@
 #include "android/camera/camera-metrics.h"
 #include "android/camera/camera-virtualscene.h"
 #include "android/console.h" /* for android_hw */
+#include "android/emulation/address_space_device.h"
 #include "android/emulation/android_qemud.h"
 #include "android/hw-sensors.h"
 #include "android/utils/debug.h"
@@ -1167,6 +1168,7 @@ struct SerialCameraClient : public OldCamerasClient {
             fbs[fbsNum].width = mWidth;
             fbs[fbsNum].height = mHeight;
             fbs[fbsNum].framebuffer = mVideoFrameBuffer.data();
+            fbs[fbsNum].framebuffer_size = mVideoFrameBuffer.size();
             fbsNum++;
         }
         if (previewSize) {
@@ -1174,6 +1176,7 @@ struct SerialCameraClient : public OldCamerasClient {
             fbs[fbsNum].width = mWidth;
             fbs[fbsNum].height = mHeight;
             fbs[fbsNum].framebuffer = mPreviewFrameBuffer.data();
+            fbs[fbsNum].framebuffer_size = mPreviewFrameBuffer.size();
             fbsNum++;
         }
 
@@ -1284,12 +1287,18 @@ private:
             return CLIENT_START_RESULT_UNKNOWN_PIXEL_FORMAT;
         }
 
+        size_t previewFrameSize;
+        if (!calculate_framebuffer_size(V4L2_PIX_FMT_RGB32, width, height,
+                                        &previewFrameSize)) {
+            return CLIENT_START_RESULT_INCORRECT_PARAMS;
+        }
+
         if (!startCapturingImpl(width, height, pixFormat)) {
             return CLIENT_START_RESULT_FAILED;
         }
 
         mVideoFrameBuffer.resize(videoFrameSize);
-        mPreviewFrameBuffer.resize(width * height * 4U);  // RGBA32
+        mPreviewFrameBuffer.resize(previewFrameSize);  // RGBA32
         mWidth = width;
         mHeight = height;
         mPixelFormat = pixFormat;
@@ -1310,7 +1319,6 @@ private:
 struct GasCameraClient : public OldCamerasClient {
     GasCameraClient(CameraInfo& ci, CameraDevice& cd)
             : OldCamerasClient(ci, cd)
-            , mGasGetHostPtr(get_address_space_device_control_ops()->get_host_ptr)
             , mGasPhysAddrStart(get_address_space_device_hw_funcs()->getPhysAddrStart())
     {}
 
@@ -1356,9 +1364,23 @@ struct GasCameraClient : public OldCamerasClient {
             return;
         }
 
+        size_t frameSize = 0;
+        if (!calculate_framebuffer_size(pixFormat, width, height, &frameSize)) {
+            qemuClientReply(qc, false, "Invalid 'pix' or 'dim' parameter"sv);
+            return;
+        }
+
         uint64_t offset;
         if (!getParamValue(offset, params, kParamOffset, parseOffset)) {
             qemuClientReply(qc, false, "Invalid or missing 'offset' parameter"sv);
+            return;
+        }
+
+        uint64_t physAddr = 0;
+        if (__builtin_add_overflow(mGasPhysAddrStart, offset, &physAddr) ||
+            !android::emulation::goldfish_address_space_is_memory_mapping_valid(
+                    physAddr, frameSize)) {
+            qemuClientReply(qc, false, "Invalid 'offset' parameter"sv);
             return;
         }
 
@@ -1383,11 +1405,14 @@ struct GasCameraClient : public OldCamerasClient {
             return;
         }
 
+        mFrameBuffer.resize(frameSize);
+
         const ClientFrameBuffer fb = {
             .pixel_format = pixFormat,
             .width = width,
             .height = height,
-            .framebuffer = getGasBufferAddress(offset),
+            .framebuffer = mFrameBuffer.data(),
+            .framebuffer_size = mFrameBuffer.size(),
         };
 
         ClientFrame frame = {
@@ -1401,6 +1426,12 @@ struct GasCameraClient : public OldCamerasClient {
         };
 
         if (readFrameImpl(whiteBalance, expComp, frame, qc)) {
+            return;
+        }
+
+        if (!android::emulation::goldfish_address_space_write_memory_mapping(
+                    physAddr, mFrameBuffer.data(), mFrameBuffer.size())) {
+            qemuClientReply(qc, false, "Invalid 'offset' parameter"sv);
             return;
         }
 
@@ -1422,6 +1453,7 @@ struct GasCameraClient : public OldCamerasClient {
 
         stopCapturingImpl();
 
+        mFrameBuffer.clear();
         ::free(mStagingFramebuffer);
         mStagingFramebuffer = nullptr;
         mStagingFramebufferSize = 0;
@@ -1455,11 +1487,7 @@ private:
         return CLIENT_START_RESULT_SUCCESS;
     }
 
-    void* getGasBufferAddress(const uint64_t offset) const {
-        return mGasGetHostPtr(mGasPhysAddrStart + offset);
-    }
-
-    void*           (*const mGasGetHostPtr)(uint64_t);
+    std::vector<uint8_t> mFrameBuffer;
     uint8_t*        mStagingFramebuffer = nullptr;
     size_t          mStagingFramebufferSize = 0;
     const uint64_t  mGasPhysAddrStart;
