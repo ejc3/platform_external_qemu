@@ -194,6 +194,7 @@ static std::vector<uint8_t> generateFramebuffer(uint32_t format,
     ClientFrameBuffer framebuffer = {};
     framebuffer.pixel_format = format;
     framebuffer.framebuffer = dest.data();
+    framebuffer.framebuffer_size = dest.size();
 
     EXPECT_EQ(0, convert_frame_slow(src.data(), V4L2_PIX_FMT_ARGB32, src.size(),
                                     width, height, &framebuffer, 1,
@@ -229,6 +230,7 @@ static std::vector<uint8_t> generateGradientFramebuffer(uint32_t format,
     ClientFrameBuffer framebuffer = {};
     framebuffer.pixel_format = format;
     framebuffer.framebuffer = dest.data();
+    framebuffer.framebuffer_size = dest.size();
 
     EXPECT_EQ(0, convert_frame_slow(src.data(), V4L2_PIX_FMT_ARGB32, src.size(),
                                     width, height, &framebuffer, 1,
@@ -291,6 +293,7 @@ TEST_P(ConvertWithSize, SlowPathIdentity) {
         ClientFrameBuffer framebuffer = {};
         framebuffer.pixel_format = format;
         framebuffer.framebuffer = dest.data();
+        framebuffer.framebuffer_size = dest.size();
 
         EXPECT_EQ(0,
                   convert_frame_slow(src.data(), format, src.size(),
@@ -323,6 +326,7 @@ TEST_P(ConvertWithSize, FastPathIdentity) {
         ClientFrameBuffer framebuffer = {};
         framebuffer.pixel_format = format;
         framebuffer.framebuffer = dest.data();
+        framebuffer.framebuffer_size = dest.size();
         framebuffer.width = param.width;
         framebuffer.height = param.height;
 
@@ -379,6 +383,7 @@ TEST_P(ConvertWithSize, FastPathRotate) {
             ClientFrameBuffer framebuffer = {};
             framebuffer.pixel_format = format;
             framebuffer.framebuffer = rotated.data();
+            framebuffer.framebuffer_size = rotated.size();
             framebuffer.width = param.width;
             framebuffer.height = param.height;
 
@@ -407,6 +412,7 @@ TEST_P(ConvertWithSize, FastPathRotate) {
             ClientFrameBuffer dest_framebuffer = {};
             dest_framebuffer.pixel_format = format;
             dest_framebuffer.framebuffer = dest.data();
+            dest_framebuffer.framebuffer_size = dest.size();
             dest_framebuffer.width = param.width;
             dest_framebuffer.height = param.height;
 
@@ -462,6 +468,7 @@ TEST_P(ConvertWithSize, Resize) {
         ClientFrameBuffer framebuffer = {};
         framebuffer.pixel_format = format;
         framebuffer.framebuffer = intermediate.data();
+        framebuffer.framebuffer_size = intermediate.size();
         framebuffer.width = param.width / kScaleAmount;
         framebuffer.height = param.height / kScaleAmount;
 
@@ -478,6 +485,7 @@ TEST_P(ConvertWithSize, Resize) {
         memset(stagingFramebuffer, 0, stagingFramebufferSize);
 
         framebuffer.framebuffer = dest.data();
+        framebuffer.framebuffer_size = dest.size();
         framebuffer.width = param.width;
         framebuffer.height = param.height;
 
@@ -521,6 +529,7 @@ TEST_P(ConvertWithSize, SourceToDest) {
             ClientFrameBuffer framebuffer = {};
             framebuffer.pixel_format = dest_format;
             framebuffer.framebuffer = dest.data();
+            framebuffer.framebuffer_size = dest.size();
             framebuffer.width = param.width;
             framebuffer.height = param.height;
 
@@ -540,6 +549,7 @@ TEST_P(ConvertWithSize, SourceToDest) {
             ClientFrameBuffer baselineFramebuffer = {};
             baselineFramebuffer.pixel_format = dest_format;
             baselineFramebuffer.framebuffer = destBaseline.data();
+            baselineFramebuffer.framebuffer_size = destBaseline.size();
 
             EXPECT_EQ(0,
                       convert_frame_slow(src.data(), src_format, src.size(),
@@ -606,6 +616,7 @@ TEST_P(FrameModifiers, ExpComp) {
             ClientFrameBuffer framebuffer = {};
             framebuffer.pixel_format = dest_format;
             framebuffer.framebuffer = dest.data();
+            framebuffer.framebuffer_size = dest.size();
             framebuffer.width = kWidth;
             framebuffer.height = kHeight;
 
@@ -625,6 +636,7 @@ TEST_P(FrameModifiers, ExpComp) {
             ClientFrameBuffer baselineFramebuffer = {};
             baselineFramebuffer.pixel_format = dest_format;
             baselineFramebuffer.framebuffer = destBaseline.data();
+            baselineFramebuffer.framebuffer_size = destBaseline.size();
 
             EXPECT_EQ(0, convert_frame_slow(
                                  src.data(), src_format, src.size(), kWidth,
@@ -772,6 +784,59 @@ TEST(CameraFormatConvertersSecurity, CroppedYVU420AndYUV420StagingNoOverflow) {
                                         kSrcWidth, kSrcHeight, &resultFrame,
                                         kDefaultExpComp, 0));
     }
+
+    free(stagingFramebuffer);
+}
+
+TEST(CameraFormatConvertersSecurity, RejectZeroOrUndersizedFramebufferSize) {
+    constexpr int kWidth = 16;
+    constexpr int kHeight = 16;
+    const std::vector<uint8_t> src = generateFramebuffer(
+            V4L2_PIX_FMT_RGB32, kWidth, kHeight, kAlpha, kRed, kGreen, kBlue);
+    const size_t destSize = bufferSize(V4L2_PIX_FMT_RGB32, kWidth, kHeight);
+    std::vector<uint8_t> dest(destSize, 0xAA);
+
+    uint8_t* stagingFramebuffer = nullptr;
+    size_t stagingFramebufferSize = 0;
+
+    // 1. framebuffer_size == 0 must fail closed on both slow and fast paths.
+    ClientFrameBuffer fbZero = {};
+    fbZero.pixel_format = V4L2_PIX_FMT_RGB32;
+    fbZero.framebuffer = dest.data();
+    fbZero.framebuffer_size = 0;
+    fbZero.width = kWidth;
+    fbZero.height = kHeight;
+
+    EXPECT_NE(0, convert_frame_slow(src.data(), V4L2_PIX_FMT_RGB32, src.size(),
+                                    kWidth, kHeight, &fbZero, 1,
+                                    kDefaultColorScale, kDefaultColorScale,
+                                    kDefaultColorScale, kDefaultExpComp));
+
+    ClientFrame resultFrameZero = {};
+    resultFrameZero.framebuffers = &fbZero;
+    resultFrameZero.framebuffers_count = 1;
+    resultFrameZero.staging_framebuffer = &stagingFramebuffer;
+    resultFrameZero.staging_framebuffer_size = &stagingFramebufferSize;
+
+    EXPECT_NE(0, convert_frame_fast(src.data(), V4L2_PIX_FMT_RGB32, src.size(),
+                                    kWidth, kHeight, &resultFrameZero,
+                                    kDefaultExpComp, 0));
+
+    // 2. framebuffer_size == destSize - 1 must fail closed on both paths.
+    ClientFrameBuffer fbSmall = fbZero;
+    fbSmall.framebuffer_size = destSize - 1;
+
+    EXPECT_NE(0, convert_frame_slow(src.data(), V4L2_PIX_FMT_RGB32, src.size(),
+                                    kWidth, kHeight, &fbSmall, 1,
+                                    kDefaultColorScale, kDefaultColorScale,
+                                    kDefaultColorScale, kDefaultExpComp));
+
+    ClientFrame resultFrameSmall = resultFrameZero;
+    resultFrameSmall.framebuffers = &fbSmall;
+
+    EXPECT_NE(0, convert_frame_fast(src.data(), V4L2_PIX_FMT_RGB32, src.size(),
+                                    kWidth, kHeight, &resultFrameSmall,
+                                    kDefaultExpComp, 0));
 
     free(stagingFramebuffer);
 }
