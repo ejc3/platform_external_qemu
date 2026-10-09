@@ -15,10 +15,16 @@
 
 #include "aemu/base/AlignedBuf.h"
 #include "android/console.h"
+#include "android/emulation/address_space_device.h"
 #include "host-common/address_space_device.h"
 #include "host-common/address_space_device.hpp"
 
 #include <gtest/gtest.h>
+
+#include <algorithm>
+#include <cstdint>
+#include <cstring>
+#include <vector>
 
 namespace android {
 
@@ -220,6 +226,101 @@ TEST_F(HostAddressSpaceTest, HostAddressMapping) {
 
     aligned_buf_free(buf);
     mDevice->close(handle);
+}
+
+TEST_F(HostAddressSpaceTest, MemoryMappingBoundsCheckAndWrite) {
+    auto ops = get_address_space_device_control_ops();
+    ASSERT_NE(nullptr, ops);
+
+    constexpr uint64_t kBaseGpa = 0x100000;
+    constexpr size_t kBufSize = 4096;
+    std::vector<uint8_t> hostBuf(kBufSize, 0x00);
+
+    ASSERT_EQ(1, ops->add_memory_mapping(kBaseGpa, hostBuf.data(), kBufSize));
+
+    uint64_t remaining = 0;
+    EXPECT_EQ(hostBuf.data(),
+              emulation::goldfish_address_space_get_host_ptr(kBaseGpa, &remaining));
+    EXPECT_EQ(kBufSize, remaining);
+
+    EXPECT_EQ(hostBuf.data() + 1024,
+              emulation::goldfish_address_space_get_host_ptr(kBaseGpa + 1024,
+                                                             &remaining));
+    EXPECT_EQ(kBufSize - 1024, remaining);
+
+    // Exact bounds should be valid; 1 byte past the end should be invalid.
+    EXPECT_TRUE(emulation::goldfish_address_space_is_memory_mapping_valid(
+            kBaseGpa, kBufSize));
+    EXPECT_FALSE(emulation::goldfish_address_space_is_memory_mapping_valid(
+            kBaseGpa, kBufSize + 1));
+    EXPECT_TRUE(emulation::goldfish_address_space_is_memory_mapping_valid(
+            kBaseGpa + 1024, kBufSize - 1024));
+    EXPECT_FALSE(emulation::goldfish_address_space_is_memory_mapping_valid(
+            kBaseGpa + 1024, kBufSize - 1024 + 1));
+    EXPECT_FALSE(emulation::goldfish_address_space_is_memory_mapping_valid(
+            kBaseGpa + kBufSize, 1));
+
+    // OOB write should be rejected without modifying the buffer.
+    std::vector<uint8_t> payload(kBufSize + 1, 0x5A);
+    EXPECT_FALSE(emulation::goldfish_address_space_write_memory_mapping(
+            kBaseGpa, payload.data(), payload.size()));
+    EXPECT_EQ(0x00, hostBuf[0]);
+
+    // In-bounds write at an offset should succeed.
+    std::vector<uint8_t> smallPayload(128, 0x3C);
+    EXPECT_TRUE(emulation::goldfish_address_space_write_memory_mapping(
+            kBaseGpa + kBufSize - 128, smallPayload.data(),
+            smallPayload.size()));
+    EXPECT_EQ(0x3C, hostBuf[kBufSize - 128]);
+    EXPECT_EQ(0x3C, hostBuf[kBufSize - 1]);
+
+    // 1 byte past the end at an offset should fail.
+    EXPECT_FALSE(emulation::goldfish_address_space_write_memory_mapping(
+            kBaseGpa + kBufSize - 127, smallPayload.data(),
+            smallPayload.size()));
+
+    ASSERT_EQ(1, ops->remove_memory_mapping(kBaseGpa, hostBuf.data(), kBufSize));
+
+    // After unmapping, writes must fail.
+    EXPECT_FALSE(emulation::goldfish_address_space_write_memory_mapping(
+            kBaseGpa, smallPayload.data(), smallPayload.size()));
+
+    // A mapping at the top of 64-bit GPA space (base + size == 2^64) must
+    // succeed without false-positive overflow rejection.
+    constexpr uint64_t kTopGpa = UINT64_MAX - kBufSize + 1;
+    std::fill(hostBuf.begin(), hostBuf.end(), 0x00);
+    ASSERT_EQ(1, ops->add_memory_mapping(kTopGpa, hostBuf.data(), kBufSize));
+
+    remaining = 0;
+    EXPECT_EQ(hostBuf.data(),
+              emulation::goldfish_address_space_get_host_ptr(kTopGpa, &remaining));
+    EXPECT_EQ(kBufSize, remaining);
+    EXPECT_EQ(hostBuf.data() + kBufSize - 1,
+              emulation::goldfish_address_space_get_host_ptr(UINT64_MAX,
+                                                             &remaining));
+    EXPECT_EQ(1u, remaining);
+    EXPECT_TRUE(emulation::goldfish_address_space_is_memory_mapping_valid(
+            kTopGpa, kBufSize));
+    EXPECT_FALSE(emulation::goldfish_address_space_is_memory_mapping_valid(
+            kTopGpa, kBufSize + 1));
+    EXPECT_TRUE(emulation::goldfish_address_space_write_memory_mapping(
+            UINT64_MAX - smallPayload.size() + 1, smallPayload.data(),
+            smallPayload.size()));
+    EXPECT_EQ(0x3C, hostBuf[kBufSize - 1]);
+
+    ASSERT_EQ(1, ops->remove_memory_mapping(kTopGpa, hostBuf.data(), kBufSize));
+
+    // A corrupt mapping that wraps past 2^64 (base + size > 2^64) must be
+    // rejected.
+    ASSERT_EQ(1, ops->add_memory_mapping(kTopGpa, hostBuf.data(), kBufSize + 1));
+    EXPECT_EQ(nullptr,
+              emulation::goldfish_address_space_get_host_ptr(kTopGpa, &remaining));
+    EXPECT_FALSE(emulation::goldfish_address_space_is_memory_mapping_valid(
+            kTopGpa, 1));
+    EXPECT_FALSE(emulation::goldfish_address_space_write_memory_mapping(
+            kTopGpa, smallPayload.data(), smallPayload.size()));
+    ASSERT_EQ(1,
+              ops->remove_memory_mapping(kTopGpa, hostBuf.data(), kBufSize + 1));
 }
 
 } // namespace android
