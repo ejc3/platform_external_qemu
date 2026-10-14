@@ -60,6 +60,14 @@ void* object_class_dynamic_cast_assert(void* klass,
                                        const char* /*func*/) {
     return klass;
 }
+
+void* qemu_bh_new(void (* /*cb*/)(void*), void* /*opaque*/) {
+    return nullptr;
+}
+
+void qemu_bh_schedule(void* /*bh*/) {}
+
+void qemu_bh_delete(void* /*bh*/) {}
 }  // extern "C"
 
 namespace android {

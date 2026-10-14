@@ -57,16 +57,29 @@ PacketStreamerTransport::PacketStreamerTransport(
     : mQemudevice(qemuDevice),
       mStub(PacketStreamer::NewStub(channel)),
       mSerializer(std::move(serializer)),
-      mChannelFactory(factory),
-      mQemuDeviceWriter([this](uint8_t* bytes, size_t size) {
-          if (!mQemudevice) {
-              return;
-          }
-          DD("Writing %d bytest to qemu", size);
-          qemu_chr_be_write(&mQemudevice->parent, bytes, size);
-      }) {}
+      mChannelFactory(factory) {}
 
 PacketStreamerTransport::~PacketStreamerTransport() {}
+
+void PacketStreamerTransport::writeToQemu(
+        std::vector<std::vector<uint8_t>> packets) {
+    if (packets.empty() || !mQemudevice || !mQemudevice->impl) {
+        return;
+    }
+    auto* impl = mQemudevice->impl;
+    std::lock_guard<std::mutex> lock(impl->incoming_mutex);
+    if (!impl->incoming_bh) {
+        return;
+    }
+    if (impl->incoming_packets.empty()) {
+        impl->incoming_packets.swap(packets);
+    } else {
+        for (auto& packet : packets) {
+            impl->incoming_packets.push_back(std::move(packet));
+        }
+    }
+    qemu_bh_schedule(impl->incoming_bh);
+}
 
 void PacketStreamerTransport::Read(const PacketResponse* received) {
     std::vector<std::vector<uint8_t>> toQemu;
@@ -81,9 +94,7 @@ void PacketStreamerTransport::Read(const PacketResponse* received) {
                         toQemu.emplace_back(bytes, bytes + size);
                     }
                 });
-    }
-    for (auto& packet : toQemu) {
-        mQemuDeviceWriter(packet.data(), packet.size());
+        writeToQemu(std::move(toQemu));
     }
 }
 
@@ -100,10 +111,8 @@ void PacketStreamerTransport::OnDone(const grpc::Status& s) {
                             toQemu.emplace_back(bytes, bytes + size);
                         }
                     });
+            writeToQemu(std::move(toQemu));
         }
-    }
-    for (auto& packet : toQemu) {
-        mQemuDeviceWriter(packet.data(), packet.size());
     }
 
     if (reconnect()) {
@@ -200,9 +209,7 @@ void PacketStreamerTransport::qemuConnected() {
                         toQemu.emplace_back(bytes, bytes + size);
                     }
                 });
-    }
-    for (auto& packet : toQemu) {
-        mQemuDeviceWriter(packet.data(), packet.size());
+        writeToQemu(std::move(toQemu));
     }
     writePackets(packets);
 }
@@ -237,10 +244,8 @@ void PacketStreamerTransport::start() {
                             toQemu.emplace_back(bytes, bytes + size);
                         }
                     });
+            writeToQemu(std::move(toQemu));
         }
-    }
-    for (auto& packet : toQemu) {
-        mQemuDeviceWriter(packet.data(), packet.size());
     }
     writePackets(packets);
     DD("Stream scheduled.");
