@@ -19,6 +19,7 @@ extern "C" {
 #include "aemu/base/containers/Lookup.h"
 #include "aemu/base/logging/Log.h"
 #include "android-qemu2-glue/emulation/DmaMap.h"
+#include "android-qemu2-glue/emulation/VmLock.h"
 
 #include <type_traits>
 
@@ -32,6 +33,7 @@ extern "C" {
 namespace qemu2 {
 
 void* DmaMap::doMap(uint64_t addr, uint64_t sz) {
+    android::RecursiveScopedVmLock vmlock;
     uint64_t sz_reg = sz;
     void* res = cpu_physical_memory_map(addr, &sz_reg, 1);
     if (sz_reg != sz) {
@@ -48,6 +50,7 @@ void* DmaMap::doMap(uint64_t addr, uint64_t sz) {
 }
 
 void DmaMap::doUnmap(void* mapped, uint64_t sz) {
+    android::RecursiveScopedVmLock vmlock;
     cpu_physical_memory_unmap(mapped, sz, 1, sz);
 }
 

@@ -14,13 +14,66 @@
 
 #include "host-common/DmaMap.h"
 #include "android/emulation/testing/TestDmaMap.h"
+#include "android/emulation/testing/TestVmLock.h"
 
 #include <gtest/gtest.h>
+
+#include <atomic>
+#include <cstdint>
+#include <thread>
+#include <vector>
 
 using android::base::Optional;
 using android::base::kNullopt;
 
 namespace android {
+
+namespace {
+
+class ThreadSafeTestVmLock : public VmLock {
+public:
+    ThreadSafeTestVmLock() : mOldVmLock(VmLock::set(this)) {}
+    ~ThreadSafeTestVmLock() override { VmLock::set(mOldVmLock); }
+
+    void lock() override {
+        mLock.lock();
+        mOwner.store(std::this_thread::get_id(), std::memory_order_relaxed);
+    }
+
+    void unlock() override {
+        mOwner.store(std::thread::id(), std::memory_order_relaxed);
+        mLock.unlock();
+    }
+
+    bool isLockedBySelf() const override {
+        return mOwner.load(std::memory_order_relaxed) ==
+               std::this_thread::get_id();
+    }
+
+private:
+    base::Lock mLock;
+    std::atomic<std::thread::id> mOwner{};
+    VmLock* mOldVmLock = nullptr;
+};
+
+class LockCheckingDmaMap : public TestDmaMap {
+public:
+    void* doMap(uint64_t addr, uint64_t buffer) override {
+        EXPECT_TRUE(VmLock::get()->isLockedBySelf());
+        mMapCount.fetch_add(1, std::memory_order_relaxed);
+        return reinterpret_cast<void*>(static_cast<uintptr_t>(addr + 0x1000));
+    }
+
+    void doUnmap(void* mapped, uint64_t buffer) override {
+        EXPECT_TRUE(VmLock::get()->isLockedBySelf());
+        mUnmapCount.fetch_add(1, std::memory_order_relaxed);
+    }
+
+    std::atomic<int> mMapCount{0};
+    std::atomic<int> mUnmapCount{0};
+};
+
+}  // namespace
 
 
 TEST(DmaMap, Default) {
@@ -168,6 +221,96 @@ TEST(DmaMap, ErrorCaseMapNonExistent) {
 TEST(DmaMap, ErrorCaseRemoveNonExistent) {
     TestDmaMap myMap;
     myMap.removeBuffer(1);
+}
+
+TEST(DmaMap, AcquiresVmLockOnMapAndUnmap) {
+    TestVmLock vmLock;
+    LockCheckingDmaMap myMap;
+
+    myMap.addBuffer(nullptr, 0x1000, 64);
+    EXPECT_EQ(1, vmLock.mLockCount);
+    EXPECT_EQ(1, vmLock.mUnlockCount);
+    EXPECT_EQ(1, myMap.mMapCount.load());
+    EXPECT_EQ(0, myMap.mUnmapCount.load());
+
+    // Fast path (already mapped) should not need to acquire VmLock.
+    EXPECT_NE(nullptr, myMap.getHostAddr(0x1000));
+    EXPECT_EQ(1, vmLock.mLockCount);
+    EXPECT_EQ(1, vmLock.mUnlockCount);
+
+    // Invalidating host mappings must hold VmLock while unmapping.
+    myMap.invalidateHostMappings();
+    EXPECT_EQ(2, vmLock.mLockCount);
+    EXPECT_EQ(2, vmLock.mUnlockCount);
+    EXPECT_EQ(1, myMap.mUnmapCount.load());
+
+    // Slow path (remapping after invalidation) must acquire VmLock.
+    EXPECT_NE(nullptr, myMap.getHostAddr(0x1000));
+    EXPECT_EQ(3, vmLock.mLockCount);
+    EXPECT_EQ(3, vmLock.mUnlockCount);
+    EXPECT_EQ(2, myMap.mMapCount.load());
+
+    // Overwriting an existing buffer unmaps the old mapping under VmLock.
+    myMap.addBuffer(nullptr, 0x1000, 128);
+    EXPECT_EQ(4, vmLock.mLockCount);
+    EXPECT_EQ(4, vmLock.mUnlockCount);
+    EXPECT_EQ(3, myMap.mMapCount.load());
+    EXPECT_EQ(2, myMap.mUnmapCount.load());
+
+    // Removing the buffer unmaps it under VmLock.
+    myMap.removeBuffer(0x1000);
+    EXPECT_EQ(5, vmLock.mLockCount);
+    EXPECT_EQ(5, vmLock.mUnlockCount);
+    EXPECT_EQ(3, myMap.mUnmapCount.load());
+}
+
+TEST(DmaMap, ConcurrentRemapAndInvalidateWithVmLock) {
+    ThreadSafeTestVmLock vmLock;
+    LockCheckingDmaMap myMap;
+
+    constexpr uint64_t kNumBuffers = 8;
+    for (uint64_t i = 1; i <= kNumBuffers; ++i) {
+        ScopedVmLock lock;
+        myMap.addBuffer(nullptr, i * 0x1000, 64);
+    }
+
+    std::atomic<bool> stop{false};
+    std::vector<std::thread> readers;
+    for (int t = 0; t < 4; ++t) {
+        readers.emplace_back([&]() {
+            while (!stop.load(std::memory_order_relaxed)) {
+                for (uint64_t i = 1; i <= kNumBuffers; ++i) {
+                    myMap.getHostAddr(i * 0x1000);
+                }
+            }
+        });
+    }
+
+    // Simulate vCPU/snapshot threads holding VmLock first before mutating
+    // DmaMap while render threads call getHostAddr without holding VmLock.
+    std::thread mutator([&]() {
+        for (int iter = 0; iter < 200; ++iter) {
+            {
+                ScopedVmLock lock;
+                myMap.invalidateHostMappings();
+            }
+            {
+                ScopedVmLock lock;
+                myMap.removeBuffer(kNumBuffers * 0x1000);
+                myMap.addBuffer(nullptr, kNumBuffers * 0x1000, 64);
+            }
+        }
+        stop.store(true, std::memory_order_relaxed);
+    });
+
+    mutator.join();
+    for (auto& reader : readers) {
+        reader.join();
+    }
+
+    ScopedVmLock lock;
+    myMap.resetHostMappings();
+    EXPECT_EQ(myMap.mMapCount.load(), myMap.mUnmapCount.load());
 }
 
 } // namespace android

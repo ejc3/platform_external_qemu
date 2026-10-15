@@ -21,6 +21,7 @@
 #include "aemu/base/files/StreamSerializing.h"
 #include "aemu/base/logging/Log.h"
 #include "aemu/base/memory/LazyInstance.h"
+#include "host-common/VmLock.h"
 #include "host-common/android_pipe_device.h"
 
 #define DEBUG 0
@@ -65,13 +66,18 @@ void DmaMap::addBuffer(void* hwpipe,
     info.guestAddr = guest_paddr;  // guest address
     info.bufferSize = bufferSize;  // size of buffer
     info.currHostAddr = kNullopt;  // no current host address
+    RecursiveScopedVmLock vmlock;
     android::base::AutoWriteLock lock(mLock);
+    if (auto existing = android::base::find(mDmaBuffers, guest_paddr)) {
+        removeMappingLocked(existing);
+    }
     createMappingLocked(&info);
     mDmaBuffers[guest_paddr] = info;
 }
 
 void DmaMap::removeBuffer(uint64_t guest_paddr) {
     D("guest paddr 0x%llx", (unsigned long long)guest_paddr);
+    RecursiveScopedVmLock vmlock;
     android::base::AutoWriteLock lock(mLock);
     if (auto info = android::base::find(mDmaBuffers, guest_paddr)) {
         removeMappingLocked(info);
@@ -90,12 +96,19 @@ void* DmaMap::getHostAddr(uint64_t guest_paddr) {
             return *(info->currHostAddr);
         } else {
             rlock.unlockRead();
+            RecursiveScopedVmLock vmlock;
             android::base::AutoWriteLock wlock(mLock);
-            createMappingLocked(info);
-            D("guest paddr 0x%llx -> host 0x%llx valid (new)",
-              (unsigned long long)guest_paddr,
-              (unsigned long long)*(info->currHostAddr));
-            return *(info->currHostAddr);
+            if (auto newInfo = android::base::find(mDmaBuffers, guest_paddr)) {
+                if (!newInfo->currHostAddr) {
+                    createMappingLocked(newInfo);
+                }
+                D("guest paddr 0x%llx -> host 0x%llx valid (new)",
+                  (unsigned long long)guest_paddr,
+                  (unsigned long long)*(newInfo->currHostAddr));
+                return *(newInfo->currHostAddr);
+            } else {
+                return 0;
+            }
         }
     } else {
         return 0;
@@ -103,6 +116,7 @@ void* DmaMap::getHostAddr(uint64_t guest_paddr) {
 }
 
 void DmaMap::invalidateHostMappings() {
+    RecursiveScopedVmLock vmlock;
     android::base::AutoWriteLock lock(mLock);
     for (auto& it : mDmaBuffers) {
         removeMappingLocked(&it.second);
@@ -110,6 +124,7 @@ void DmaMap::invalidateHostMappings() {
 }
 
 void DmaMap::resetHostMappings() {
+    RecursiveScopedVmLock vmlock;
     android::base::AutoWriteLock lock(mLock);
     for (auto& it : mDmaBuffers) {
         removeMappingLocked(&it.second);
