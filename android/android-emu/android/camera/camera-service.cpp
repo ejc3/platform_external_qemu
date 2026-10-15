@@ -1229,7 +1229,9 @@ struct SerialCameraClient : public OldCamerasClient {
         stopCapturingImpl();
 
         mVideoFrameBuffer.clear();
+        mVideoFrameBuffer.shrink_to_fit();
         mPreviewFrameBuffer.clear();
+        mPreviewFrameBuffer.shrink_to_fit();
         ::free(mStagingFramebuffer);
         mStagingFramebuffer = nullptr;
         mStagingFramebufferSize = 0;
@@ -1454,6 +1456,7 @@ struct GasCameraClient : public OldCamerasClient {
         stopCapturingImpl();
 
         mFrameBuffer.clear();
+        mFrameBuffer.shrink_to_fit();
         ::free(mStagingFramebuffer);
         mStagingFramebuffer = nullptr;
         mStagingFramebufferSize = 0;
