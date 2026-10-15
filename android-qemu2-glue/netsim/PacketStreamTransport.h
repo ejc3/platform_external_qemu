@@ -32,6 +32,7 @@ extern "C" {
 // #include "qemu/typedefs.h"
 #include "qemu/osdep.h"
 #include "chardev/char.h"
+#include "qemu/main-loop.h"
 }
 // IWYU pragma: end_keep
 // clang-format on
@@ -43,7 +44,18 @@ class PacketStreamerTransport;
 
 typedef struct PacketStreamChardev {
     Chardev parent;
-    std::weak_ptr<PacketStreamerTransport> transport;
+    struct Impl {
+        explicit Impl(QEMUBH* bh) : incoming_bh(bh) {}
+        ~Impl() {
+            if (incoming_bh) {
+                qemu_bh_delete(incoming_bh);
+            }
+        }
+        std::weak_ptr<PacketStreamerTransport> transport;
+        std::mutex incoming_mutex;
+        std::vector<std::vector<uint8_t>> incoming_packets;
+        QEMUBH* incoming_bh;
+    }* impl;
 } PacketStreamChardev;
 
 using netsim::packet::PacketRequest;
@@ -141,6 +153,7 @@ private:
                             ChannelFactory factory);
 
     void writePackets(const std::vector<PacketRequest>& requests);
+    void writeToQemu(std::vector<std::vector<uint8_t>> packets);
 
     grpc::ClientContext mContext;
     PacketStreamChardev* mQemudevice;
@@ -151,8 +164,6 @@ private:
 
     // Self reference, erased when onDone is called.
     std::shared_ptr<PacketStreamerTransport> mMe;
-
-    byte_writer mQemuDeviceWriter;
 
     // Finishing
     bool mReconnect{true};
