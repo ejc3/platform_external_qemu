@@ -292,11 +292,15 @@ ExtendedWindow::ExtendedWindow(EmulatorQtWindow* eW, ToolWindow* tW)
         mSidebarButtons.addButton(mExtendedUi->virtSensorsButton);
     }
 
-    if (android::featurecontrol::isEnabled(
-                android::featurecontrol::GenericSnapshotsUI) &&
-        !getConsoleAgents()
-                 ->settings->android_cmdLineOptions()
-                 ->qt_hide_window) {
+    // Snapshot pane is disabled in embedded emulator and for glasses AVDs.
+    const bool qtHideWindow = getConsoleAgents()
+                                      ->settings->android_cmdLineOptions()
+                                      ->qt_hide_window;
+    const bool showSnapshotsButton =
+            android::featurecontrol::isEnabled(
+                    android::featurecontrol::GenericSnapshotsUI) &&
+            !qtHideWindow && (avdFlavor != AVD_GLASSES);
+    if (showSnapshotsButton) {
         mSidebarButtons.addButton(mExtendedUi->snapshotButton);
         mExtendedUi->snapshotButton->setVisible(true);
     } else {
