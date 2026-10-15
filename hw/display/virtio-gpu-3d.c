@@ -1182,10 +1182,25 @@ void virtio_gpu_load_ram_slots(void* qemufile, VirtIOGPU* g) {
 
     uint32_t count = qemu_get_be32(file);
 
+    if (count > VIRTIO_GPU_MAX_RAM_SLOTS) {
+        fprintf(stderr, "%s: snapshot slot count %u exceeds VIRTIO_GPU_MAX_RAM_SLOTS %u; "
+                "extra slots will be ignored\n", __func__, count, VIRTIO_GPU_MAX_RAM_SLOTS);
+    }
+
     for (uint32_t i = 0; i < count; ++i) {
-        table->slots[i].resource_id = qemu_get_be32(file);
-        table->slots[i].size = qemu_get_be32(file);
-        table->slots[i].gpa = qemu_get_be64(file);
+        /* Always consume the entry from the stream to stay in sync, but only
+         * store it if it fits in the table. */
+        uint32_t resource_id = qemu_get_be32(file);
+        uint32_t slot_size = qemu_get_be32(file);
+        uint64_t gpa = qemu_get_be64(file);
+
+        if (i >= VIRTIO_GPU_MAX_RAM_SLOTS) {
+            continue;
+        }
+
+        table->slots[i].resource_id = resource_id;
+        table->slots[i].size = slot_size;
+        table->slots[i].gpa = gpa;
 
         if (!table->slots[i].size) continue;
 
