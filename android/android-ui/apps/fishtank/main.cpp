@@ -85,6 +85,46 @@ using android::control::interceptor::StdOutLoggingInterceptorFactory;
 
 AndroidOptions sOpts[1];
 
+/**
+ * @brief Returns the directory in which the memory mapped pixel buffer is
+ * created.
+ *
+ * The emulator only accepts file backed (MMAP) image transport handles that
+ * resolve to a file inside one of its allowed directories (the emulator and
+ * system temp directories, /tmp, /dev/shm on Linux and the discovery
+ * directory). We pick a directory that is allowed regardless of the
+ * environment of the emulator process.
+ */
+static std::string getSharedPixelBufferDirectory() {
+#ifdef _WIN32
+    // %TEMP%\AndroidEmulator, which is inside the system temp directory.
+    return System::get()->getTempDir();
+#else
+#ifdef __linux__
+    // Memory backed and always allowed on Linux.
+    if (System::get()->pathIsDir("/dev/shm") &&
+        System::get()->pathCanWrite("/dev/shm")) {
+        return "/dev/shm";
+    }
+#endif
+    return "/tmp";
+#endif
+}
+
+/**
+ * @brief Converts an absolute file path into a file:/// URL that can be used
+ * as a shared memory handle.
+ */
+static std::string toFileUri(const std::string& path) {
+#ifdef _WIN32
+    std::string uri = "file:///" + path;
+    std::replace(uri.begin(), uri.end(), '\\', '/');
+    return uri;
+#else
+    return "file://" + path;
+#endif
+}
+
 void messagePump(int, char**) {
     auto window = emulator_window_get();
     while (!window->done) {
@@ -622,7 +662,8 @@ int main(int argc, char* argv[]) {
 
     startFishtankGrpc(opts);
 
-    android::files::TemporaryFile pixels;
+    // Pixel buffer for the MMAP transport, only created when it is used.
+    std::unique_ptr<android::files::TemporaryFile> pixels;
     EmulatorQtWindow* window = EmulatorQtWindow::getInstance();
     if (window) {
         syncDisplayModeWithBackend(window);
@@ -651,10 +692,19 @@ int main(int argc, char* argv[]) {
             LOG(INFO) << "Visible ui, initializing pixel streamer via gRPC";
             window->initializeStreamer("", StreamTransport::Standard);
         } else {
-            LOG(INFO) << "Visible ui, initializing pixel streamer at: "
-                      << pixels.path();
-            window->initializeStreamer("file:///" + pixels.path(),
-                                       StreamTransport::MMAP);
+            pixels = std::make_unique<android::files::TemporaryFile>(
+                    "fishtank-pixels", getSharedPixelBufferDirectory());
+            if (pixels->valid()) {
+                LOG(INFO) << "Visible ui, initializing pixel streamer at: "
+                          << pixels->path();
+                window->initializeStreamer(toFileUri(pixels->path()),
+                                           StreamTransport::MMAP);
+            } else {
+                LOG(ERROR) << "Unable to create a pixel buffer in "
+                           << getSharedPixelBufferDirectory()
+                           << ", initializing pixel streamer via gRPC";
+                window->initializeStreamer("", StreamTransport::Standard);
+            }
         }
     } else {
         LOG(INFO) << "No visible ui, not initializing pixel streamer";
