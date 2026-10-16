@@ -13,5 +13,4 @@ android_add_interface(TARGET android-grpc-incubating-services-stack
 target_link_libraries(
   android-grpc-incubating-services-stack
   INTERFACE modem-service-impl car-service-impl sensor-service-impl
-            avd-service-impl virtual-scene-service-server-impl
-            screen-recording-service-impl)
+            avd-service-impl virtual-scene-service-server-impl)
