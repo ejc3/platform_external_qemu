@@ -20,7 +20,9 @@ android_add_library(
       android/emulation/control/utils/AudioUtils.cpp
       android/emulation/control/utils/ScreenshotUtils.cpp
       android/emulation/control/utils/SharedMemoryLibrary.cpp
-  DEPS android-emu
+  DEPS absl::status
+       absl::statusor
+       android-emu
        android-emu-base-headers
        android-emu-base-streams
        android-emu-tracing

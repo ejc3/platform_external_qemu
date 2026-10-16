@@ -218,16 +218,28 @@ public:
         format->set_height(frame->height());
         format->set_width(frame->width());
 
-        auto pixelCount = request->width() * request->height() *
-                          ScreenshotUtils::getBytesPerPixel(*request);
+        // ConvertFromI420 writes a full frame, so size the buffer after the
+        // frame we actually produce rather than the requested dimensions
+        // (which can be 0).
+        size_t pixelCount = static_cast<size_t>(frame->width()) *
+                            static_cast<size_t>(frame->height()) *
+                            ScreenshotUtils::getBytesPerPixel(*request);
         uint8_t* dest = nullptr;
         bool shipBytes = false;
 
+        // Keeps the shared memory region mapped until we are done writing.
+        SharedMemoryLibrary::LibraryEntry shm;
         if (request->transport().channel() == ImageTransport::MMAP) {
-            auto shm = mSharedMemoryLibrary.borrow(
+            auto borrowed = mSharedMemoryLibrary.borrow(
                     request->transport().handle(), pixelCount);
-            if (shm->isOpen() && shm->isMapped()) {
-                dest = (uint8_t*)shm.get();
+            if (!borrowed.ok()) {
+                return Status(static_cast<::grpc::StatusCode>(
+                                      borrowed.status().code()),
+                              std::string(borrowed.status().message()));
+            }
+            shm = std::move(borrowed).value();
+            if (shm->isOpen() && shm->isMapped() && shm->size() >= pixelCount) {
+                dest = static_cast<uint8_t*>(shm->get());
                 auto transport = format->mutable_transport();
                 transport->set_handle(request->transport().handle());
                 transport->set_channel(ImageTransport::MMAP);
@@ -267,11 +279,21 @@ public:
                             const ImageFormat* request,
                             ServerWriter<Image>* writer) override {
         SharedMemoryLibrary::LibraryEntry entry;
-        if (request->transport().channel() == ImageTransport::MMAP) {
-            entry = mSharedMemoryLibrary.borrow(
-                    request->transport().handle(),
-                    request->width() * request->height() *
-                            ScreenshotUtils::getBytesPerPixel(*request));
+        size_t requestedSize = static_cast<size_t>(request->width()) *
+                               static_cast<size_t>(request->height()) *
+                               ScreenshotUtils::getBytesPerPixel(*request);
+        // Only pin the region up front if we know its size, getScreenshot
+        // borrows it with the actual frame size otherwise.
+        if (request->transport().channel() == ImageTransport::MMAP &&
+            requestedSize > 0) {
+            auto borrowed = mSharedMemoryLibrary.borrow(
+                    request->transport().handle(), requestedSize);
+            if (!borrowed.ok()) {
+                return Status(static_cast<::grpc::StatusCode>(
+                                      borrowed.status().code()),
+                              std::string(borrowed.status().message()));
+            }
+            entry = std::move(borrowed).value();
         }
 
         // Make sure we always write the first frame, this can be
