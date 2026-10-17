@@ -15,3 +15,20 @@ android_qt_lib(
        ui::gl-qt-bridge
        ui::widgets)
 target_link_libraries(ext-page-snapshot PUBLIC snapshot-service-client)
+
+android_add_test(
+  TARGET ext-page-snapshot-tests
+  SOURCE_DIR
+  src
+  SRC android/skin/qt/extended-pages/snapshot-page_test.cpp
+  DEPS absl::statusor
+       android-emu
+       android-emu-test-launcher
+       emulator_controller-service-client
+       ext-page-snapshot
+       gmock
+       qemu-host-common-headers
+       Qt${QT_VERSION_MAJOR}::Core
+       Qt${QT_VERSION_MAJOR}::Widgets
+       ui::gl-qt-bridge
+       ui::widgets)

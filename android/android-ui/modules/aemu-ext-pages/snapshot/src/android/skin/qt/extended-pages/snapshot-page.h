@@ -53,6 +53,7 @@ public:
     enum class SelectionStatus { NoSelection, Valid, Invalid };
 
     void enableConnections();
+    void setControllerForTest(std::unique_ptr<SnapshotController> controller);
 public slots:
     void slot_snapshotLoadCompleted(PackageData);
     void slot_snapshotSaveCompleted(PackageData);
