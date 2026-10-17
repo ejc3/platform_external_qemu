@@ -48,3 +48,17 @@ target_include_directories(
           include
           # We need access to the settings agent.
           ${ANDROID_QEMU2_TOP_DIR}/android/android-emu)
+
+android_add_test(
+  TARGET aemu-ui-widgets-tests
+  SOURCE_DIR src
+  SRC android/skin/qt/error-dialog_test.cpp
+  DEPS android-emu
+       android-emu-base
+       android-emu-test-launcher
+       gmock
+       qemu-host-common-headers
+       Qt${QT_VERSION_MAJOR}::Core
+       Qt${QT_VERSION_MAJOR}::Gui
+       Qt${QT_VERSION_MAJOR}::Widgets
+       ui::widgets)
