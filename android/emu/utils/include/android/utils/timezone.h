@@ -58,4 +58,23 @@ extern long android_tzoffset_in_seconds(time_t* utc_time);
 extern const char* timezone_win32_to_zoneinfo(const char* key_name,
                                               const char* standard_name);
 
+/* Return non-zero if |tzname|, as returned by bufprint_zoneinfo_timezone(),
+ * should be sent to the guest with the qemu.timezone boot property. |tzname|
+ * is the timezone requested with -timezone if QEMU accepted it (see
+ * timezone_set()), otherwise the host timezone.
+ *
+ * When this property is set, the guest copies it into persist.sys.timezone,
+ * overriding the timezone the user selected in the guest (b/532790747). It is
+ * therefore only sent if |tzname| is a valid zoneinfo name (not
+ * "Unknown/Unknown") and either:
+ *   - it is the timezone requested with -timezone, passed in
+ *     |requested_tzname| (NULL if the option was not used), or
+ *   - the userdata partition is initialized, i.e. |wipe_data| is non-zero.
+ *     This happens with -wipe-data and on the first boot of an AVD: the
+ *     emulator sets wipe_data when the AVD has no userdata-qemu.img yet.
+ */
+extern int timezone_should_inject_boot_property(const char* tzname,
+                                                int wipe_data,
+                                                const char* requested_tzname);
+
 ANDROID_END_HEADER

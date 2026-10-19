@@ -44,6 +44,9 @@ static const char* get_zoneinfo_timezone( void );  /* forward */
 static char         android_timezone0[256];
 static const char*  android_timezone;
 
+/* Written by bufprint_zoneinfo_timezone() when the timezone is unknown. */
+static const char   kUnknownTimezone[] = "Unknown/Unknown";
+
 static int
 check_timezone_is_zoneinfo(const char*  tz)
 {
@@ -72,7 +75,7 @@ bufprint_zoneinfo_timezone( char*  p, char*  end )
     const char*  tz = get_zoneinfo_timezone();
 
     if (tz == NULL || !check_timezone_is_zoneinfo(tz))
-        return bufprint(p, end, "Unknown/Unknown");
+        return bufprint(p, end, "%s", kUnknownTimezone);
     else
         return bufprint(p, end, "%s", tz);
 }
@@ -938,6 +941,24 @@ get_zoneinfo_timezone( void )
 }
 
 #endif /* _WIN32 */
+
+int
+timezone_should_inject_boot_property(const char* tzname,
+                                     int wipe_data,
+                                     const char* requested_tzname)
+{
+    if (!check_timezone_is_zoneinfo(tzname) ||
+        !strcmp(tzname, kUnknownTimezone)) {
+        return 0;
+    }
+    // Always send the timezone requested with -timezone. QEMU applies it with
+    // timezone_set(), so it is |tzname|, unless it is not a zoneinfo name, in
+    // which case QEMU ignores it and |tzname| is the host timezone.
+    if (requested_tzname != nullptr && !strcmp(requested_tzname, tzname)) {
+        return 1;
+    }
+    return wipe_data != 0;
+}
 
 int
 timezone_set(const char *tzname)
