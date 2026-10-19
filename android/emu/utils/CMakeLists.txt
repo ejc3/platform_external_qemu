@@ -48,6 +48,7 @@ android_add_test(
       android/utils/path_unittest.cpp
       android/utils/Random_unittest.cpp
       android/utils/sockets_unittest.cpp
+      android/utils/timezone_unittest.cpp
   WINDOWS android/utils/win32_cmdline_quote_unittest.cpp
   DEPS android-emu-base android-emu-base-headers android-emu-utils gtest
        gtest_main)
