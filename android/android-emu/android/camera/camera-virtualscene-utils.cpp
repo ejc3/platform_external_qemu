@@ -164,13 +164,16 @@ int RenderedCameraDevice::readFrame(ClientFrame* resultFrame,
                                     float bScale,
                                     float expComp,
                                     const char* direction,
-                                    int orientation) {
+                                    int sensorOrientation) {
 
     VerSceneConfig::Mode sceneMode = VerSceneConfig::Mode::Unknown;
+    int baseRotation = 0;
     if (mUsingEnvironmentScene) {
         sceneMode = VirtualSceneManager::getSceneMode();
+        baseRotation = VirtualSceneManager::getSceneBaseRotation();
     } else if (mOwnedScene != VER_INVALID_HANDLE) {
         sceneMode = ver_scene_get_mode(mOwnedScene);
+        baseRotation = ver_scene_get_scene_rotation(mOwnedScene);
     }
 
     if (sceneMode == VerSceneConfig::Mode::Unknown) {
@@ -190,6 +193,8 @@ int RenderedCameraDevice::readFrame(ClientFrame* resultFrame,
         // Rotate scene view matrix by 180 degrees for the front camera
         extraRotationEulerDegrees.y = 180.0f;
     }
+    extraRotationEulerDegrees.z =
+            static_cast<float>(baseRotation - sensorOrientation);
 
     // TODO(virtualscene-perf): update the view here to avoid resizing?
     // Update camera based on physical model and set view projection accordingly
@@ -221,7 +226,7 @@ int RenderedCameraDevice::readFrame(ClientFrame* resultFrame,
         const bool viewHandlesRotation =
                 VerSceneConfig::modeSupportsViewRotations(sceneMode);
         const char* convertDirection = direction;
-        int convertOrientation = orientation;
+        int convertOrientation = get_coarse_orientation(sensorOrientation);
         if (viewHandlesRotation) {
             convertDirection = "front";
             convertOrientation = 1;
