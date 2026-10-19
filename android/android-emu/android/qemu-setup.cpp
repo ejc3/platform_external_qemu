@@ -343,10 +343,13 @@ static bool setup_console_and_adb_ports(int console_port,
 }
 
 static void inject_timezone_boot_property() {
+    const AndroidOptions* opts =
+            getConsoleAgents()->settings->android_cmdLineOptions();
     char tzname[64];
     char* end = tzname + sizeof(tzname);
     char* p = bufprint_zoneinfo_timezone(tzname, end);
-    if (p < end) {
+    if (p < end && timezone_should_inject_boot_property(tzname, opts->wipe_data,
+                                                        opts->timezone)) {
         boot_property_add_qemu_timezone(tzname);
     }
 }

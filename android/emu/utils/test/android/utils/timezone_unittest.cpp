@@ -75,5 +75,42 @@ TEST(TimezoneTest, Win32ToZoneinfoReturnsNullForUnknownNames) {
                                nullptr, kNorwegianWEuropeStandardName));
 }
 
+TEST(TimezoneTest, ShouldInjectBootPropertyWhenUserdataIsInitialized) {
+    EXPECT_TRUE(timezone_should_inject_boot_property(
+            "Asia/Tokyo", /*wipe_data=*/1, /*requested_tzname=*/nullptr));
+    EXPECT_TRUE(timezone_should_inject_boot_property(
+            "America/Argentina/Buenos_Aires", /*wipe_data=*/1,
+            /*requested_tzname=*/nullptr));
+}
+
+TEST(TimezoneTest, ShouldNotInjectBootPropertyOnRegularBoot) {
+    // b/532790747: a cold boot must keep the timezone selected in the guest.
+    EXPECT_FALSE(timezone_should_inject_boot_property(
+            "Asia/Tokyo", /*wipe_data=*/0, /*requested_tzname=*/nullptr));
+}
+
+TEST(TimezoneTest, ShouldInjectBootPropertyForRequestedTimezone) {
+    EXPECT_TRUE(timezone_should_inject_boot_property(
+            "America/New_York", /*wipe_data=*/0,
+            /*requested_tzname=*/"America/New_York"));
+}
+
+TEST(TimezoneTest, ShouldNotInjectBootPropertyForRejectedRequestedTimezone) {
+    // QEMU ignores an invalid -timezone value and uses the host timezone.
+    EXPECT_FALSE(timezone_should_inject_boot_property(
+            "Asia/Tokyo", /*wipe_data=*/0, /*requested_tzname=*/"JST"));
+}
+
+TEST(TimezoneTest, ShouldNotInjectBootPropertyForInvalidTimezone) {
+    EXPECT_FALSE(timezone_should_inject_boot_property(
+            "Unknown/Unknown", /*wipe_data=*/1, /*requested_tzname=*/nullptr));
+    EXPECT_FALSE(timezone_should_inject_boot_property(
+            "JST", /*wipe_data=*/1, /*requested_tzname=*/nullptr));
+    EXPECT_FALSE(timezone_should_inject_boot_property(
+            "", /*wipe_data=*/1, /*requested_tzname=*/nullptr));
+    EXPECT_FALSE(timezone_should_inject_boot_property(
+            nullptr, /*wipe_data=*/1, /*requested_tzname=*/nullptr));
+}
+
 }  // namespace utils
 }  // namespace android
