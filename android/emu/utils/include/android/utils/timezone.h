@@ -41,4 +41,21 @@ extern char*  bufprint_zoneinfo_timezone( char*  buffer, char*  end );
  */
 extern long android_tzoffset_in_seconds(time_t* utc_time);
 
+/* Return the zoneinfo timezone name (e.g. "Asia/Tokyo") of a Windows
+ * timezone, or NULL if it is not known.
+ *
+ * |key_name| is the timezone's registry key name, as reported by
+ * GetDynamicTimeZoneInformation() (e.g. "Tokyo Standard Time"). It is never
+ * localized, so it is looked up first.
+ *
+ * |standard_name| is the timezone name reported by strftime("%Z"). It is only
+ * used as a fallback because it is localized on non-English Windows
+ * installations.
+ *
+ * Both names can be NULL or empty. This function is available on all hosts so
+ * that it can be unit tested.
+ */
+extern const char* timezone_win32_to_zoneinfo(const char* key_name,
+                                              const char* standard_name);
+
 ANDROID_END_HEADER

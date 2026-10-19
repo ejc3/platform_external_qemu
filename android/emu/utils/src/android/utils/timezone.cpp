@@ -12,6 +12,7 @@
 #include "android/utils/timezone.h"
 
 #include "aemu/base/memory/ScopedPtr.h"
+#include "aemu/base/system/Win32UnicodeString.h"
 #include "android/utils/bufprint.h"
 #include "android/utils/debug.h"
 #include "android/utils/file_io.h"
@@ -397,9 +398,6 @@ get_zoneinfo_timezone( void )
 
 
 /* on Windows, we need to translate the Windows timezone into a ZoneInfo one */
-#ifdef _WIN32
-
-#include <windows.h>
 typedef struct {
     const char*  win_name;
     const char*  zoneinfo_name;
@@ -863,43 +861,78 @@ static const Win32Timezone  _win32_timezones[] = {
     { NULL, NULL }
 };
 
+/* Return the zoneinfo name of the Windows timezone |win_name|, or nullptr if
+ * it is not in the table above. */
+static const char*
+lookup_win32_zoneinfo(const char* win_name)
+{
+    if (win_name == nullptr) {
+        return nullptr;
+    }
+    for (const Win32Timezone* win32tz = _win32_timezones;
+         win32tz->win_name != nullptr; win32tz++) {
+        if (!strcmp(win32tz->win_name, win_name)) {
+            return win32tz->zoneinfo_name;
+        }
+    }
+    return nullptr;
+}
+
+const char*
+timezone_win32_to_zoneinfo(const char* key_name, const char* standard_name)
+{
+    const char* zoneinfo = lookup_win32_zoneinfo(key_name);
+    if (zoneinfo == nullptr) {
+        zoneinfo = lookup_win32_zoneinfo(standard_name);
+    }
+    return zoneinfo;
+}
+
+#ifdef _WIN32
+#include <windows.h>
+
 static const char*
 get_zoneinfo_timezone( void )
 {
     if (!android_timezone)
     {
-        char		          tzname[128];
-        time_t		          t = time(NULL);
-        struct tm*            tm = localtime(&t);
-        if (!tm) {
-            D("%s: could not determine current date/time\n", __FUNCTION__);
-            return NULL;
+        // Prefer the registry key name of the timezone (e.g.
+        // "Tokyo Standard Time"): unlike the name returned by strftime("%Z"),
+        // it is not localized (b/532790747, b/574875267).
+        std::string key_name;
+        DYNAMIC_TIME_ZONE_INFORMATION dtzi = {};
+        if (GetDynamicTimeZoneInformation(&dtzi) != TIME_ZONE_ID_INVALID) {
+            key_name = android::base::Win32UnicodeString::convertToUtf8(
+                    dtzi.TimeZoneKeyName);
+        } else {
+            D("%s: GetDynamicTimeZoneInformation() failed: error %lu\n",
+              __FUNCTION__, GetLastError());
         }
-        // The lookup table above doesn't include "Daylight" in its timezone
-        // name. Thus, we always set dst to 0 (b/117424123)
-        struct tm local_tm = *tm;
-        local_tm.tm_isdst = 0;
-        const Win32Timezone*  win32tz = _win32_timezones;
 
-
-        memset(tzname, 0, sizeof(tzname));
-        strftime(tzname, sizeof(tzname) - 1, "%Z", &local_tm);
-
-        for (win32tz = _win32_timezones; win32tz->win_name != NULL; win32tz++)
-            if ( !strcmp(win32tz->win_name, tzname) ) {
-                android_timezone = win32tz->zoneinfo_name;
-                goto Exit;
+        // Fall back to the name reported by the C runtime.
+        char standard_name[128] = "";
+        time_t t = time(nullptr);
+        struct tm* tm = localtime(&t);
+        if (tm) {
+            // The lookup table above doesn't include "Daylight" in its timezone
+            // name. Thus, we always set dst to 0 (b/117424123)
+            struct tm local_tm = *tm;
+            local_tm.tm_isdst = 0;
+            if (strftime(standard_name, sizeof(standard_name), "%Z",
+                         &local_tm) == 0) {
+                standard_name[0] = '\0';
             }
+        }
 
-#if 0  /* TODO */
-    /* we didn't find it, this may come from localized versions of Windows. we're going to explore the registry,
-    * as the code in Postgresql does...
-    */
-#endif
-        D( "%s: could not determine current timezone\n", __FUNCTION__ );
-        return NULL;
+        android_timezone =
+                timezone_win32_to_zoneinfo(key_name.c_str(), standard_name);
+        if (!android_timezone) {
+            D("%s: could not determine current timezone (key name: '%s', "
+              "standard name: '%s')\n",
+              __FUNCTION__, key_name.c_str(), standard_name);
+            return nullptr;
+        }
     }
-Exit:
     D( "emulator: found timezone %s\n", android_timezone );
     return android_timezone;
 }
