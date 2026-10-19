@@ -32,6 +32,40 @@ TEST(TimezoneTest, Win32ToZoneinfoMapsKeyNames) {
     EXPECT_STREQ("America/Los_Angeles",
                  timezone_win32_to_zoneinfo("Pacific Standard Time", nullptr));
     EXPECT_STREQ("Etc/GMT", timezone_win32_to_zoneinfo("UTC", nullptr));
+
+    // Key names added by Windows updates (see CLDR windowsZones.xml).
+    EXPECT_STREQ(
+            "America/Punta_Arenas",
+            timezone_win32_to_zoneinfo("Magallanes Standard Time", nullptr));
+    EXPECT_STREQ("Asia/Omsk",
+                 timezone_win32_to_zoneinfo("Omsk Standard Time", nullptr));
+    EXPECT_STREQ("Asia/Qyzylorda", timezone_win32_to_zoneinfo(
+                                           "Qyzylorda Standard Time", nullptr));
+    EXPECT_STREQ("Africa/Sao_Tome",
+                 timezone_win32_to_zoneinfo("Sao Tome Standard Time", nullptr));
+    EXPECT_STREQ("Europe/Saratov",
+                 timezone_win32_to_zoneinfo("Saratov Standard Time", nullptr));
+    EXPECT_STREQ("Africa/Juba", timezone_win32_to_zoneinfo(
+                                        "South Sudan Standard Time", nullptr));
+    EXPECT_STREQ("Africa/Khartoum",
+                 timezone_win32_to_zoneinfo("Sudan Standard Time", nullptr));
+    EXPECT_STREQ("Etc/GMT-13", timezone_win32_to_zoneinfo("UTC+13", nullptr));
+    EXPECT_STREQ(
+            "Europe/Volgograd",
+            timezone_win32_to_zoneinfo("Volgograd Standard Time", nullptr));
+    EXPECT_STREQ("America/Whitehorse",
+                 timezone_win32_to_zoneinfo("Yukon Standard Time", nullptr));
+}
+
+TEST(TimezoneTest, Win32ToZoneinfoMapsKeyNamesToZonesWithMatchingOffset) {
+    // Asia/Almaty moved to UTC+5 in 2024 and America/Chihuahua to UTC-6 in
+    // 2022, so they no longer match these UTC+6 and UTC-7 timezones.
+    EXPECT_STREQ(
+            "Asia/Bishkek",
+            timezone_win32_to_zoneinfo("Central Asia Standard Time", nullptr));
+    EXPECT_STREQ("America/Mazatlan",
+                 timezone_win32_to_zoneinfo("Mountain Standard Time (Mexico)",
+                                            nullptr));
 }
 
 TEST(TimezoneTest, Win32ToZoneinfoUsesKeyNameOnLocalizedWindows) {
