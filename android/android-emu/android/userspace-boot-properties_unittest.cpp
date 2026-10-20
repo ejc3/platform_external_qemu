@@ -224,4 +224,68 @@ TEST(getUserspaceBootProperties, Bootconfig2On) {
     EXPECT_STREQ(paramsMap["androidboot.serialno"].c_str(), "serialno");
 }
 
+TEST(getUserspaceBootProperties, SystemuiRendererGraphiteApi37) {
+    AndroidOptions opts = makeAndroidOptions();
+    opts.systemui_renderer = const_cast<char*>("graphite");
+
+    fc::setEnabledOverride(fc::AndroidbootProps, false);
+    fc::setEnabledOverride(fc::AndroidbootProps2, true);
+
+    AndroidHwConfig hw = getDefaultHwConfig();
+
+    const auto params = getUserspaceBootProperties(
+            &opts,
+            "x86_64",                   // targetArch
+            "serialno",                 // serialno
+            123,                        // bootPropOpenglesVersion
+            37,                         // apiLevel
+            AVD_PHONE,                  // avdFlavor
+            "kernelSerialPrefix",       // kernelSerialPrefix
+            nullptr,                    // verifiedBootParameters
+            &hw);                       // hwConfig
+
+    std::map<std::string, std::string> paramsMap;
+    for (const auto& kv : params) {
+        EXPECT_TRUE(paramsMap.insert(kv).second);
+    }
+
+    EXPECT_EQ(paramsMap.count(
+                      "androidboot.surface_flinger.renderengine_graphite_vulkan"),
+              1u);
+    EXPECT_STREQ(
+            paramsMap["androidboot.surface_flinger.renderengine_graphite_vulkan"]
+                    .c_str(),
+            "true");
+}
+
+TEST(getUserspaceBootProperties, SystemuiRendererGraphiteBelowApi37) {
+    AndroidOptions opts = makeAndroidOptions();
+    opts.systemui_renderer = const_cast<char*>("graphite");
+
+    fc::setEnabledOverride(fc::AndroidbootProps, false);
+    fc::setEnabledOverride(fc::AndroidbootProps2, true);
+
+    AndroidHwConfig hw = getDefaultHwConfig();
+
+    const auto params = getUserspaceBootProperties(
+            &opts,
+            "x86_64",                   // targetArch
+            "serialno",                 // serialno
+            123,                        // bootPropOpenglesVersion
+            36,                         // apiLevel
+            AVD_PHONE,                  // avdFlavor
+            "kernelSerialPrefix",       // kernelSerialPrefix
+            nullptr,                    // verifiedBootParameters
+            &hw);                       // hwConfig
+
+    std::map<std::string, std::string> paramsMap;
+    for (const auto& kv : params) {
+        EXPECT_TRUE(paramsMap.insert(kv).second);
+    }
+
+    EXPECT_EQ(paramsMap.count(
+                      "androidboot.surface_flinger.renderengine_graphite_vulkan"),
+              0u);
+}
+
 }  // namespace android
