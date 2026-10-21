@@ -239,8 +239,8 @@ const TargetInfo kTarget = {
         "ttyAMA",
         "virtio-blk-device",
         "virtio-net-device",
-        {IMAGE_TYPE_SD_CARD, IMAGE_TYPE_VENDOR, IMAGE_TYPE_ENCRYPTION_KEY,
-         IMAGE_TYPE_USER_DATA, IMAGE_TYPE_CACHE, IMAGE_TYPE_SYSTEM},
+        {IMAGE_TYPE_SD_CARD, IMAGE_TYPE_ENCRYPTION_KEY, IMAGE_TYPE_SYSTEM,
+         IMAGE_TYPE_USER_DATA, IMAGE_TYPE_VENDOR, IMAGE_TYPE_CACHE},
         {NULL},
 #elif defined(TARGET_ARM)
         "arm",
@@ -249,8 +249,8 @@ const TargetInfo kTarget = {
         "ttyAMA",
         "virtio-blk-device",
         "virtio-net-device",
-        {IMAGE_TYPE_SD_CARD, IMAGE_TYPE_VENDOR, IMAGE_TYPE_ENCRYPTION_KEY,
-         IMAGE_TYPE_USER_DATA, IMAGE_TYPE_CACHE, IMAGE_TYPE_SYSTEM},
+        {IMAGE_TYPE_SD_CARD, IMAGE_TYPE_ENCRYPTION_KEY, IMAGE_TYPE_SYSTEM,
+         IMAGE_TYPE_USER_DATA, IMAGE_TYPE_VENDOR, IMAGE_TYPE_CACHE},
         {NULL},
 #elif defined(TARGET_MIPS64)
         "mips64",
@@ -259,8 +259,8 @@ const TargetInfo kTarget = {
         "ttyGF",
         "virtio-blk-device",
         "virtio-net-device",
-        {IMAGE_TYPE_SD_CARD, IMAGE_TYPE_VENDOR, IMAGE_TYPE_ENCRYPTION_KEY,
-         IMAGE_TYPE_USER_DATA, IMAGE_TYPE_CACHE, IMAGE_TYPE_SYSTEM},
+        {IMAGE_TYPE_SD_CARD, IMAGE_TYPE_ENCRYPTION_KEY, IMAGE_TYPE_SYSTEM,
+         IMAGE_TYPE_USER_DATA, IMAGE_TYPE_VENDOR, IMAGE_TYPE_CACHE},
         {NULL},
 #elif defined(TARGET_MIPS)
         "mips",
@@ -269,8 +269,8 @@ const TargetInfo kTarget = {
         "ttyGF",
         "virtio-blk-device",
         "virtio-net-device",
-        {IMAGE_TYPE_SD_CARD, IMAGE_TYPE_VENDOR, IMAGE_TYPE_ENCRYPTION_KEY,
-         IMAGE_TYPE_USER_DATA, IMAGE_TYPE_CACHE, IMAGE_TYPE_SYSTEM},
+        {IMAGE_TYPE_SD_CARD, IMAGE_TYPE_ENCRYPTION_KEY, IMAGE_TYPE_SYSTEM,
+         IMAGE_TYPE_USER_DATA, IMAGE_TYPE_VENDOR, IMAGE_TYPE_CACHE},
         {NULL},
 #elif defined(TARGET_X86_64)
         "x86_64",
@@ -782,8 +782,13 @@ private:
                     deviceParam = StringFormat("%s,drive=sdcard",
                                                kTarget.storageDeviceType);
                 } else {
-                    /* no sdcard is defined */
-                    return {};
+                    qCow2Format = false;
+                    driveParam += StringFormat(
+                            "index=%d,id=sdcard,if=none,driver=null-co,"
+                            "read-zeroes=on,read-only",
+                            m_driveIndex++);
+                    deviceParam = StringFormat("%s,drive=sdcard",
+                                               kTarget.storageDeviceType);
                 }
                 break;
             case IMAGE_TYPE_ENCRYPTION_KEY:
