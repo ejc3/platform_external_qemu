@@ -203,7 +203,7 @@ const int kMaxTargetQemuParams = 16;
  * listed in the command line, because the command line order determines which
  * mount point the partition is attached to.  For x86, the first partition
  * listed in command line is mounted first, i.e. to /dev/block/vda,
- * the next one to /dev/block/vdb, etc. However, for arm/mips, it's reversed;
+ * the next one to /dev/block/vdb, etc. However, for arm, it's reversed;
  * the last one is mounted to /dev/block/vda. the 2nd last to /dev/block/vdb.
  * So far, we have 6(kMaxPartitions) types defined for system, cache, userdata
  * and sdcard images.
@@ -247,26 +247,6 @@ const TargetInfo kTarget = {
         "arm",
         "cortex-a15",
         "ttyAMA",
-        "virtio-blk-device",
-        "virtio-net-device",
-        {IMAGE_TYPE_SD_CARD, IMAGE_TYPE_ENCRYPTION_KEY, IMAGE_TYPE_SYSTEM,
-         IMAGE_TYPE_USER_DATA, IMAGE_TYPE_VENDOR, IMAGE_TYPE_CACHE},
-        {NULL},
-#elif defined(TARGET_MIPS64)
-        "mips64",
-        "mips64el",
-        "MIPS64R6-generic",
-        "ttyGF",
-        "virtio-blk-device",
-        "virtio-net-device",
-        {IMAGE_TYPE_SD_CARD, IMAGE_TYPE_ENCRYPTION_KEY, IMAGE_TYPE_SYSTEM,
-         IMAGE_TYPE_USER_DATA, IMAGE_TYPE_VENDOR, IMAGE_TYPE_CACHE},
-        {NULL},
-#elif defined(TARGET_MIPS)
-        "mips",
-        "mipsel",
-        "74Kf",
-        "ttyGF",
         "virtio-blk-device",
         "virtio-net-device",
         {IMAGE_TYPE_SD_CARD, IMAGE_TYPE_ENCRYPTION_KEY, IMAGE_TYPE_SYSTEM,
@@ -2661,10 +2641,7 @@ extern "C" int main(int argc, char** argv) {
 
     // Make sure we always use the custom Android CPU definition.
     args.add("-cpu");
-#if defined(TARGET_MIPS)
-    args.add((hw->hw_cpu_model && hw->hw_cpu_model[0]) ? hw->hw_cpu_model
-                                                       : kTarget.qemuCpu);
-#elif defined(CONFIG_LINUX) && defined(TARGET_X86_64)
+#if defined(CONFIG_LINUX) && defined(TARGET_X86_64)
     // Add "-xts" to turn on tweaks only made for xts
     if (opts->xts) {
         if (feature_is_enabled(kFeature_AndroidVirtualizationFramework)) {

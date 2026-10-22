@@ -699,18 +699,6 @@ static bool emulator_handleCommonEmulatorOptions(AndroidOptions* opts,
         D("Auto-config: -qemu -cpu %s", hw->hw_cpu_model);
     }
 
-    if (hw->hw_cpu_model[0] == '\0') {
-        char* abi = avdInfo_getTargetAbi(avd);
-        if (abi && !strcmp(abi, "mips32r6")) {
-            str_reset(&hw->hw_cpu_model, "mips32r6-generic");
-            D("Auto-config: -qemu -cpu %s", hw->hw_cpu_model);
-        } else if (abi && !strcmp(abi, "mips32r5")) {
-            str_reset(&hw->hw_cpu_model, "P5600");
-            D("Auto-config: -qemu -cpu %s", hw->hw_cpu_model);
-        }
-        AFREE(abi);
-    }
-
     KernelVersion kernelVersion = KERNEL_VERSION_0;
     if (!android_getKernelVersion(hw->kernel_path, &kernelVersion)) {
         derror("Can't get kernel version from the kernel image file: '%s'",

@@ -1371,24 +1371,14 @@ char* avdInfo_getRanchuKernelPath(const AvdInfo* i) {
          * for our target architecture.
          */
         char temp[PATH_MAX], *p = temp, *end = p + sizeof(temp);
-        const char* suffix = "";
-
-        /* mips/ranchu holds distinct images for mips & mips32[r5|r6] */
-        if (!strcmp(i->targetAbi, "mips32r6")) {
-            suffix = "-mips32r6";
-        } else if (!strcmp(i->targetAbi, "mips32r5")) {
-            suffix = "-mips32r5";
-        }
 
         p = bufprint(temp, end,
                      "%s" PATH_SEP "prebuilts" PATH_SEP "qemu-kernel" PATH_SEP
-                     "%s" PATH_SEP "ranchu" PATH_SEP "kernel-qemu%s",
-                     i->androidBuildRoot, i->targetArch, suffix);
+                     "%s" PATH_SEP "ranchu" PATH_SEP "kernel-qemu",
+                     i->androidBuildRoot, i->targetArch);
         if (p >= end || !path_exists(temp)) {
-            /* arm64 and mips64 are special: their kernel-qemu is actually
-             * kernel-ranchu */
-            if (!strcmp(i->targetArch, "arm64") ||
-                !strcmp(i->targetArch, "mips64")) {
+            /* arm64 is special: its kernel-qemu is actually kernel-ranchu */
+            if (!strcmp(i->targetArch, "arm64")) {
                 return avdInfo_getKernelPath(i);
             } else {
                 derror("bad workspace: cannot find prebuilt ranchu kernel in: "
@@ -1510,14 +1500,6 @@ static bool is_armish(const AvdInfo* i) {
     }
 }
 
-static bool is_mipsish(const AvdInfo* i) {
-    if (strncmp(i->targetAbi, "mips", 4) == 0) {
-        return true;
-    } else {
-        return false;
-    }
-}
-
 /*
     arm is pretty tricky: the system image device path
     changes depending on the number of disks: the last
@@ -1526,10 +1508,6 @@ static bool is_mipsish(const AvdInfo* i) {
 */
 const char* const arm_device_id[] = {
         "a003e00", "a003c00", "a003a00", "a003800", "a003600", "a003400",
-};
-
-const char* const mips_device_id[] = {
-        "1f03d000", "1f03d200", "1f03d400", "1f03d600", "1f03d800",
 };
 
 static bool has_vendor(const AvdInfo* i) {
@@ -1583,10 +1561,6 @@ static char* get_device_path(const AvdInfo* info, const char* image) {
         snprintf(buf, sizeof(buf),
                  "/dev/block/platform/%s.virtio_mmio/by-name/%s",
                  arm_device_id[i], image);
-    } else if (is_mipsish(info)) {
-        snprintf(buf, sizeof(buf),
-                 "/dev/block/platform/%s.virtio_mmio/by-name/%s",
-                 mips_device_id[i], image);
     }
     return strdup(buf);
 }
