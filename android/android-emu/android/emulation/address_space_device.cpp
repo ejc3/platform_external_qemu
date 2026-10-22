@@ -11,6 +11,8 @@
 // WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 // See the License for the specific language governing permissions and
 // limitations under the License.
+#include "android/emulation/address_space_device.h"
+
 #include "aemu/base/logging/Log.h"
 #include "host-common/address_space_device.h"
 #include "host-common/AddressSpaceService.h"
@@ -25,6 +27,7 @@
 #include "aemu/base/memory/LazyInstance.h"
 #include "aemu/base/synchronization/Lock.h"
 
+#include <cstring>
 #include <map>
 #include <unordered_map>
 #include <memory>
@@ -331,9 +334,9 @@ public:
         AutoLock lock(mContextsLock);
         mContexts.clear();
         AddressSpaceSharedSlotsHostMemoryAllocatorContext::globalStateClear();
-        auto it = mMemoryMappings.begin();
+        AutoLock memLock(mMemoryMappingsLock);
         std::vector<std::pair<uint64_t, uint64_t>> gpasSizesToErase;
-        for (auto it: mMemoryMappings) {
+        for (const auto& it : mMemoryMappings) {
             auto gpa = it.first;
             auto size = it.second.second;
             gpasSizesToErase.push_back({gpa, size});
@@ -354,9 +357,32 @@ public:
         return removeMemoryMappingLocked(gpa, size);
     }
 
-    void *getHostPtr(uint64_t gpa) const {
+    void *getHostPtr(uint64_t gpa, uint64_t* outRemainingSize = nullptr) const {
         AutoLock lock(mMemoryMappingsLock);
-        return getHostPtrLocked(gpa);
+        return getHostPtrLocked(gpa, outRemainingSize);
+    }
+
+    bool isMemoryMappingRangeValid(uint64_t gpa, uint64_t size) const {
+        AutoLock lock(mMemoryMappingsLock);
+        uint64_t remainingSize = 0;
+        void* ptr = getHostPtrLocked(gpa, &remainingSize);
+        return ptr != nullptr && size <= remainingSize;
+    }
+
+    bool writeMemoryMapping(uint64_t gpa, const void* src, size_t size) {
+        if (!src && size > 0) {
+            return false;
+        }
+        AutoLock lock(mMemoryMappingsLock);
+        uint64_t remainingSize = 0;
+        void* dst = getHostPtrLocked(gpa, &remainingSize);
+        if (!dst || size > remainingSize) {
+            return false;
+        }
+        if (size > 0) {
+            std::memcpy(dst, src, size);
+        }
+        return true;
     }
 
 private:
@@ -430,22 +456,30 @@ private:
         }
     }
 
-    void *getHostPtrLocked(uint64_t gpa) const {
-        auto i = mMemoryMappings.lower_bound(gpa); // i->first >= gpa (or i==end)
-        if ((i != mMemoryMappings.end()) && (i->first == gpa)) {
-            return i->second.first;  // gpa is exactly the beginning of the range
-        } else if (i == mMemoryMappings.begin()) {
-            return nullptr;  // can't '--i', see below
-        } else {
-            --i;
-
-            if ((i->first + i->second.second) > gpa) {
-                // move the host ptr by +(gpa-base)
-                return static_cast<char *>(i->second.first) + (gpa - i->first);
-            } else {
-                return nullptr;  // the range does not cover gpa
-            }
+    void *getHostPtrLocked(uint64_t gpa,
+                           uint64_t* outRemainingSize = nullptr) const {
+        auto i = mMemoryMappings.upper_bound(gpa);
+        if (i == mMemoryMappings.begin()) {
+            return nullptr;
         }
+        --i;
+
+        const uint64_t base = i->first;
+        const uint64_t size = i->second.second;
+        if (!i->second.first || size == 0) {
+            return nullptr;
+        }
+
+        uint64_t rangeLast = 0;
+        if (!__builtin_add_overflow(base, size - 1, &rangeLast) &&
+            gpa <= rangeLast) {
+            const uint64_t offset = gpa - base;
+            if (outRemainingSize) {
+                *outRemainingSize = size - offset;
+            }
+            return static_cast<char *>(i->second.first) + offset;
+        }
+        return nullptr;
     }
 
     mutable Lock mMemoryMappingsLock;
@@ -605,6 +639,22 @@ int goldfish_address_space_memory_state_load(android::base::Stream *stream) {
 int goldfish_address_space_memory_state_save(android::base::Stream *stream) {
     sAddressSpaceDeviceState->save(stream);
     return 0;
+}
+
+void* goldfish_address_space_get_host_ptr(uint64_t gpa,
+                                          uint64_t* outRemainingSize) {
+    return sAddressSpaceDeviceState->getHostPtr(gpa, outRemainingSize);
+}
+
+bool goldfish_address_space_is_memory_mapping_valid(uint64_t gpa,
+                                                    uint64_t size) {
+    return sAddressSpaceDeviceState->isMemoryMappingRangeValid(gpa, size);
+}
+
+bool goldfish_address_space_write_memory_mapping(uint64_t gpa,
+                                                 const void* src,
+                                                 size_t size) {
+    return sAddressSpaceDeviceState->writeMemoryMapping(gpa, src, size);
 }
 
 }  // namespace emulation

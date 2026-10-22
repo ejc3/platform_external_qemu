@@ -35,3 +35,20 @@ android_qt_lib(
        qemu-host-common-headers
        Qt${QT_VERSION_MAJOR}::Core
        Qt${QT_VERSION_MAJOR}::Widgets)
+
+android_add_test(
+  TARGET ext-page-car-tests
+  SOURCE_DIR src
+  SRC android/skin/qt/extended-pages/car-rotary-page_test.cpp
+  DEPS aemu-ui-car-property-utils
+       aemu-ui-qt-base
+       android-emu
+       android-emu-test-launcher
+       ext-page-car
+       gmock
+       qemu-host-common-headers
+       Qt${QT_VERSION_MAJOR}::Core
+       Qt${QT_VERSION_MAJOR}::Widgets
+       ui::common
+       ui::gl-qt-bridge
+       ui::widgets)

@@ -19,6 +19,8 @@
 #include "host-common/MultiDisplay.h"
 #include "host-common/opengles.h"
 
+#include <string.h>
+
 namespace android {
 
 static MultiDisplayPipe* sMultiDisplayPipeInstance = nullptr;
@@ -45,6 +47,12 @@ MultiDisplayPipe::~MultiDisplayPipe() {
 }
 
 void MultiDisplayPipe::onMessage(const std::vector<uint8_t>& data) {
+    // The message length is guest-controlled; never index |data| without
+    // first checking that the command's payload is actually present.
+    if (data.empty()) {
+        dwarning("MultiDisplayPipe: ignoring empty message.");
+        return;
+    }
     uint8_t cmd = data[0];
     switch (cmd) {
         case QUERY: {
@@ -69,8 +77,15 @@ void MultiDisplayPipe::onMessage(const std::vector<uint8_t>& data) {
             break;
         }
         case BIND: {
-            uint32_t id = *(uint32_t*)&(data[1]);
-            uint32_t cb = *(uint32_t*)&(data[5]);
+            constexpr size_t kBindMessageSize = 1 + sizeof(uint32_t) * 2;
+            if (data.size() < kBindMessageSize) {
+                dwarning("MultiDisplayPipe: BIND message too short (%zu < %zu), ignoring.",
+                         data.size(), kBindMessageSize);
+                break;
+            }
+            uint32_t id, cb;
+            memcpy(&id, &data[1], sizeof(id));
+            memcpy(&cb, &data[1 + sizeof(uint32_t)], sizeof(cb));
             LOG(DEBUG) << "MultiDisplayPipe bind display " << id << " cb " << cb;
             const auto ins = MultiDisplay::getInstance();
             if (ins) {

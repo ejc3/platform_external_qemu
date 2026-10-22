@@ -18,8 +18,13 @@
 #include "android/skin/qt/extended-pages/legacy_snapshot_controller.h"
 
 #include <algorithm>
+#include <atomic>
+#include <memory>
 #include <string>
 #include <utility>
+
+#include <QPointer>
+#include <QSignalBlocker>
 
 #include <QApplication>
 #include <QByteArray>
@@ -375,6 +380,11 @@ SnapshotPage* SnapshotPage::get() {
     return sInstance;
 }
 
+void SnapshotPage::setControllerForTest(
+        std::unique_ptr<SnapshotController> controller) {
+    mSnapshotService = std::move(controller);
+}
+
 void SnapshotPage::deleteSnapshot(const WidgetSnapshotItem* theItem) {
     if (!theItem) {
         return;
@@ -511,8 +521,11 @@ void SnapshotPage::changeUiFromSaveOnExitSetting(SaveSnapshotOnExit choice) {
             break;
     }
 
-    getConsoleAgents()->emu->setUserSettingIsDontSaveSnapshot(
-            getSaveOnExitChoice() == SaveSnapshotOnExit::Never);
+    if (getConsoleAgents()->emu &&
+        getConsoleAgents()->emu->setUserSettingIsDontSaveSnapshot) {
+        getConsoleAgents()->emu->setUserSettingIsDontSaveSnapshot(
+                getSaveOnExitChoice() == SaveSnapshotOnExit::Never);
+    }
 }
 
 void SnapshotPage::on_enlargeInfoButton_clicked() {
@@ -788,8 +801,7 @@ void SnapshotPage::updateAfterSelectionChanged() {
     } else {
         QString logicalName = theItem->logicalName();
         simpleName = theItem->id();
-        System::FileSize snapSize =
-                android::snapshot::folderSize(simpleName.toStdString());
+        System::FileSize snapSize = theItem->snapshot()->size;
         QString description = theItem->description();
         if (!description.isEmpty()) {
             descriptionString = QString("<p><big>%1</big>")
@@ -995,12 +1007,14 @@ void SnapshotPage::on_screenshotLoaded(std::string image,
 void SnapshotPage::showEvent(QShowEvent* ee) {
     // Setup controller
 
-    if (getConsoleAgents()->settings->android_cmdLineOptions()->grpc_ui) {
-        mSnapshotService = std::make_unique<
-                android::emulation::control::GrpcSnapshotController>();
-    } else {
-        mSnapshotService = std::make_unique<
-                android::emulation::control::LegacySnapshotController>();
+    if (!mSnapshotService) {
+        if (getConsoleAgents()->settings->android_cmdLineOptions()->grpc_ui) {
+            mSnapshotService = std::make_unique<
+                    android::emulation::control::GrpcSnapshotController>();
+        } else {
+            mSnapshotService = std::make_unique<
+                    android::emulation::control::LegacySnapshotController>();
+        }
     }
 
     populateSnapshotDisplay();
@@ -1176,11 +1190,6 @@ void SnapshotPage::on_snapshotsList(std::vector<SnapshotInfo> snapshots) {
             deleteInvalidsChoice != DeleteInvalidSnapshots::No) {
             invalidSnapshots.push_back(aSnapshot);
         }
-        // Decimate the invalid snapshots
-        if (!snapshotIsValid && !mIsStandAlone) {
-            mSnapshotService->deleteSnapshot(aSnapshot.snapshot_id,
-                                             [](auto status) {});
-        }
         // Create a top-level item.
         QTreeWidget* displayWidget;
         if (aSnapshot.snapshot_id == Quickboot::kDefaultBootSnapshot) {
@@ -1257,14 +1266,23 @@ void SnapshotPage::on_snapshotsList(std::vector<SnapshotInfo> snapshots) {
     mUi->snapshotDisplay->setSortingEnabled(true);
     adjustIcons(mUi->defaultSnapshotDisplay);
     adjustIcons(mUi->snapshotDisplay);
-    if (!mIsStandAlone && !mDidInitialInvalidCheck &&
+    bool didInitialInvalidCheck = mDidInitialInvalidCheck;
+    mDidInitialInvalidCheck = true;
+    if (!mIsStandAlone && !didInitialInvalidCheck &&
         !invalidSnapshots.empty()) {
         if (deleteInvalidsChoice == DeleteInvalidSnapshots::Auto) {
             // Delete the invalid snapshots
-            for (const auto toRemove : invalidSnapshots) {
+            auto pending =
+                    std::make_shared<std::atomic<size_t>>(invalidSnapshots.size());
+            QPointer<SnapshotPage> safeThis = this;
+            for (const auto& toRemove : invalidSnapshots) {
                 mSnapshotService->deleteSnapshot(
                         toRemove.snapshot_id,
-                        [this](auto _unused) { populateSnapshotDisplay(); });
+                        [safeThis, pending](auto _unused) {
+                            if (pending->fetch_sub(1) == 1 && safeThis) {
+                                safeThis->populateSnapshotDisplay();
+                            }
+                        });
             }
         } else if (deleteInvalidsChoice == DeleteInvalidSnapshots::Ask) {
             // Emit a signal to ask the user. (After the UI actually displays
@@ -1272,7 +1290,6 @@ void SnapshotPage::on_snapshotsList(std::vector<SnapshotInfo> snapshots) {
             emit askAboutInvalidSnapshots(invalidSnapshots);
         }
     }
-    mDidInitialInvalidCheck = true;
 }
 
 void SnapshotPage::slot_askAboutInvalidSnapshots(
@@ -1308,13 +1325,21 @@ void SnapshotPage::slot_askAboutInvalidSnapshots(
             QSettings settings;
             settings.setValue(Ui::Settings::DELETE_INVALID_SNAPSHOTS,
                               static_cast<int>(DeleteInvalidSnapshots::Auto));
+            QSignalBlocker blocker(mUi->deleteInvalidSnapshots);
             mUi->deleteInvalidSnapshots->setCurrentIndex(
                     static_cast<int>(DeleteInvalidSnapshotsUiOrder::Auto));
         }
         // Delete the invalid snapshots
+        auto pending = std::make_shared<std::atomic<size_t>>(snapshots.size());
+        QPointer<SnapshotPage> safeThis = this;
         for (const auto& snapshot : snapshots) {
-            mSnapshotService->deleteSnapshot(snapshot.snapshot_id,
-                                             [](auto _unused) {});
+            mSnapshotService->deleteSnapshot(
+                    snapshot.snapshot_id,
+                    [safeThis, pending](auto _unused) {
+                        if (pending->fetch_sub(1) == 1 && safeThis) {
+                            safeThis->populateSnapshotDisplay();
+                        }
+                    });
         }
     }
 }

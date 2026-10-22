@@ -383,6 +383,7 @@ OPT_PARAM(android_serialno,
 
 OPT_FLAG(hands_in_space, "Enable hands input for XR spatial application.")
 
+// experimental 'graphite' renderer is an API 37+ feature, do not advertise it
 OPT_PARAM(systemui_renderer,
           "<option list>",
           "Set guest side renderer backend. Available options: skiagl, skiavk")

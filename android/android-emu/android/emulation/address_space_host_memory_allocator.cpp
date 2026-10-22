@@ -64,7 +64,19 @@ void *AddressSpaceHostMemoryAllocatorContext::allocate_impl(const uint64_t phys_
 #else
     constexpr uint64_t k_alloc_alignment = 4096;
 #endif
-    const uint32_t aligned_size = align(size, (*m_hw->getGuestPageSize)());
+    const uint64_t page_size = (*m_hw->getGuestPageSize)();
+    // |size| is guest- or snapshot-controlled. Reject zero and anything whose
+    // page-aligned size does not fit the uint32_t bookkeeping used below;
+    // otherwise align() would truncate and we would hand out an undersized
+    // buffer that callers (e.g. load()) then write |size| bytes into.
+    if (size == 0 || page_size == 0 || size > UINT32_MAX - (page_size - 1)) {
+        return nullptr;
+    }
+    const uint64_t aligned_size64 = (size + page_size - 1) & ~(page_size - 1);
+    if (aligned_size64 > UINT32_MAX) {
+        return nullptr;
+    }
+    const uint32_t aligned_size = static_cast<uint32_t>(aligned_size64);
 
     void *host_ptr = android::aligned_buf_alloc(k_alloc_alignment, aligned_size);
     if (host_ptr) {
@@ -143,6 +155,8 @@ bool AddressSpaceHostMemoryAllocatorContext::load(base::Stream* stream) {
         uint64_t size = stream->getBe64();
         void *mem = allocate_impl(phys_addr, size);
         if (mem) {
+            // allocate_impl() guarantees the allocation is at least |size|
+            // bytes (page-aligned up) or returns nullptr.
             if (stream->read(mem, size) != static_cast<ssize_t>(size)) {
                 return false;
             }

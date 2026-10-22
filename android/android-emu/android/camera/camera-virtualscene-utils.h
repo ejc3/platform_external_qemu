@@ -53,7 +53,7 @@ public:
                   float bScale,
                   float expComp,
                   const char* direction,
-                  int orientation);
+                  int sensorOrientation);
 
 private:
     // Common camera header.

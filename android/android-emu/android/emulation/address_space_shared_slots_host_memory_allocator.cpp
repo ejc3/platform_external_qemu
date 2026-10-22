@@ -19,6 +19,7 @@
 #include "aemu/base/synchronization/Lock.h"
 #include "android/utils/misc.h"
 #include "host-common/crash-handler.h"
+#include <cstdint>
 #include <map>
 #include <unordered_set>
 #include <unordered_map>
@@ -162,6 +163,10 @@ bool MemBlock::isAllFree() const {
 }
 
 uint64_t MemBlock::allocate(const size_t requestedSize) {
+    if (requestedSize == 0) {
+        return 0;
+    }
+
     FreeSubblocks_t::iterator i = findFreeSubblock(&freeSubblocks, requestedSize);
     if (i == freeSubblocks.end()) {
         return 0;
@@ -337,7 +342,20 @@ void AddressSpaceSharedSlotsHostMemoryAllocatorContext::perform(AddressSpaceDevi
 uint64_t
 AddressSpaceSharedSlotsHostMemoryAllocatorContext::allocate(
         AddressSpaceDevicePingInfo *info) {
-    const uint32_t alignedSize = align(info->size, (*m_hw->getGuestPageSize)());
+    const uint64_t size = info->size;
+    const uint64_t pageSize = (*m_hw->getGuestPageSize)();
+    // |size| is guest-controlled. Reject zero and anything whose page-aligned
+    // size does not fit the uint32_t bookkeeping used below; otherwise align()
+    // would truncate |size| to int and could return 0 (leaving the MemBlock
+    // marked free while m_allocations holds a raw MemBlock* to it).
+    if (size == 0 || pageSize == 0 || size > UINT32_MAX - (pageSize - 1)) {
+        return -1;
+    }
+    const uint64_t alignedSize64 = (size + pageSize - 1) & ~(pageSize - 1);
+    if (alignedSize64 > UINT32_MAX) {
+        return -1;
+    }
+    const uint32_t alignedSize = static_cast<uint32_t>(alignedSize64);
 
     AutoLock lock(g_blocksLock);
     for (auto& kv : g_blocks) {

@@ -176,6 +176,7 @@ std::vector<std::pair<std::string, std::string>> getUserspaceBootProperties(
     const char* qemuHardwareGralloc;
     const char* qemuSkin;
     const char* qemuRenderengineProp;
+    const char* qemuRenderengineGraphiteProp;
     const char* dalvikVmHeapsizeProp;
     const char* qemuLegacyFakeCameraProp;
     const char* qemuCameraProtocolVerProp;
@@ -221,6 +222,8 @@ std::vector<std::pair<std::string, std::string>> getUserspaceBootProperties(
         qemuHardwareGralloc = "androidboot.hardware.gralloc";
         qemuSkin = "androidboot.qemu.skin";
         qemuRenderengineProp = "androidboot.debug.renderengine.backend";
+        qemuRenderengineGraphiteProp =
+                "androidboot.surface_flinger.renderengine_graphite_vulkan";
         dalvikVmHeapsizeProp = "androidboot.dalvik.vm.heapsize";
         qemuLegacyFakeCameraProp = "androidboot.qemu.legacy_fake_camera";
         qemuCameraProtocolVerProp = "androidboot.qemu.camera_protocol_ver";
@@ -262,6 +265,7 @@ std::vector<std::pair<std::string, std::string>> getUserspaceBootProperties(
         qemuHardwareGralloc = "qemu.hardware.gralloc";
         qemuSkin = "qemu.skin";
         qemuRenderengineProp = nullptr;
+        qemuRenderengineGraphiteProp = nullptr;
         dalvikVmHeapsizeProp = "qemu.dalvik.vm.heapsize";
         qemuLegacyFakeCameraProp = "qemu.legacy_fake_camera";
         qemuCameraProtocolVerProp = "qemu.camera_protocol_ver";
@@ -554,25 +558,43 @@ std::vector<std::pair<std::string, std::string>> getUserspaceBootProperties(
 
     const char* qemuUirendererPropValue = nullptr;
     const char* qemuRenderenginePropValue = nullptr;
+    const char* qemuRenderengineGraphitePropValue = nullptr;
+    bool hasRenderOverride = false;
     if (opts->systemui_renderer) {
         // Enforce user given renderer backend parameter, this path is not
         // guaranteed to work but will give users an option to select different
         // backend in case of any issues.
-        qemuUirendererPropValue = opts->systemui_renderer;
-        qemuRenderenginePropValue = opts->systemui_renderer;
+        if (!strcmp(opts->systemui_renderer, "graphite")) {
+            if (apiLevel >= 37) {
+                hasRenderOverride = true;
+                qemuRenderengineGraphitePropValue = "true";
+            } else {
+                dwarning(
+                        "Ignoring '-systemui-renderer graphite': Graphite render "
+                        "engine requires API level 37 or higher (current API level: %d); "
+                        "falling back to default renderer.",
+                        apiLevel);
+            }
+        } else {
+            hasRenderOverride = true;
+            qemuUirendererPropValue = opts->systemui_renderer;
+            qemuRenderenginePropValue = opts->systemui_renderer;
 
-        // Check if the skiavk can actually work if requested
-        if (!strncmp(qemuUirendererPropValue, "skiavk", 6)) {
-            const bool supportsMultipleQueues =
-                    fc::isEnabled(fc::VulkanVirtualQueue) || isVkNVIDIA;
-            if (!supportsMultipleQueues) {
-                // Give an error if the user manually enables skiavk without the
-                // necessary feature flags, as it'll cause boot time errors.
-                dfatal("SkiaVK requires VulkanVirtualQueue feature to be "
-                       "enabled!");
+            // Check if the skiavk can actually work if requested
+            if (!strncmp(qemuUirendererPropValue, "skiavk", 6)) {
+                const bool supportsMultipleQueues =
+                        fc::isEnabled(fc::VulkanVirtualQueue) || isVkNVIDIA;
+                if (!supportsMultipleQueues) {
+                    // Give an error if the user manually enables skiavk without the
+                    // necessary feature flags, as it'll cause boot time errors.
+                    dfatal("SkiaVK requires VulkanVirtualQueue feature to be "
+                           "enabled!");
+                }
             }
         }
-    } else {
+    }
+
+    if (!hasRenderOverride) {
         // SkiaVK requires multiple graphics queues and it works better with
         // GuestAngle. This behavior requires system image to support overriding
         // hwui and renderengine backends, which is only guaranteed to be
@@ -605,7 +627,7 @@ std::vector<std::pair<std::string, std::string>> getUserspaceBootProperties(
         }
     }
 
-    if (fc::isEnabled(fc::GLESDynamicVersion) && !qemuUirendererPropValue) {
+    if (!qemuUirendererPropValue && fc::isEnabled(fc::GLESDynamicVersion)) {
         qemuUirendererPropValue = "skiagl";
     }
 
@@ -630,6 +652,11 @@ std::vector<std::pair<std::string, std::string>> getUserspaceBootProperties(
 
     if (qemuRenderengineProp && qemuRenderenginePropValue) {
         params.push_back({qemuRenderengineProp, qemuRenderenginePropValue});
+    }
+
+    if (qemuRenderengineGraphiteProp && qemuRenderengineGraphitePropValue) {
+        params.push_back({qemuRenderengineGraphiteProp,
+                          qemuRenderengineGraphitePropValue});
     }
 
     if (androidbootLogcatProp) {

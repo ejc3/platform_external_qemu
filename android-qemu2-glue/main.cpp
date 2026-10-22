@@ -203,7 +203,7 @@ const int kMaxTargetQemuParams = 16;
  * listed in the command line, because the command line order determines which
  * mount point the partition is attached to.  For x86, the first partition
  * listed in command line is mounted first, i.e. to /dev/block/vda,
- * the next one to /dev/block/vdb, etc. However, for arm/mips, it's reversed;
+ * the next one to /dev/block/vdb, etc. However, for arm, it's reversed;
  * the last one is mounted to /dev/block/vda. the 2nd last to /dev/block/vdb.
  * So far, we have 6(kMaxPartitions) types defined for system, cache, userdata
  * and sdcard images.
@@ -239,8 +239,8 @@ const TargetInfo kTarget = {
         "ttyAMA",
         "virtio-blk-device",
         "virtio-net-device",
-        {IMAGE_TYPE_SD_CARD, IMAGE_TYPE_VENDOR, IMAGE_TYPE_ENCRYPTION_KEY,
-         IMAGE_TYPE_USER_DATA, IMAGE_TYPE_CACHE, IMAGE_TYPE_SYSTEM},
+        {IMAGE_TYPE_SD_CARD, IMAGE_TYPE_ENCRYPTION_KEY, IMAGE_TYPE_SYSTEM,
+         IMAGE_TYPE_USER_DATA, IMAGE_TYPE_VENDOR, IMAGE_TYPE_CACHE},
         {NULL},
 #elif defined(TARGET_ARM)
         "arm",
@@ -249,28 +249,8 @@ const TargetInfo kTarget = {
         "ttyAMA",
         "virtio-blk-device",
         "virtio-net-device",
-        {IMAGE_TYPE_SD_CARD, IMAGE_TYPE_VENDOR, IMAGE_TYPE_ENCRYPTION_KEY,
-         IMAGE_TYPE_USER_DATA, IMAGE_TYPE_CACHE, IMAGE_TYPE_SYSTEM},
-        {NULL},
-#elif defined(TARGET_MIPS64)
-        "mips64",
-        "mips64el",
-        "MIPS64R6-generic",
-        "ttyGF",
-        "virtio-blk-device",
-        "virtio-net-device",
-        {IMAGE_TYPE_SD_CARD, IMAGE_TYPE_VENDOR, IMAGE_TYPE_ENCRYPTION_KEY,
-         IMAGE_TYPE_USER_DATA, IMAGE_TYPE_CACHE, IMAGE_TYPE_SYSTEM},
-        {NULL},
-#elif defined(TARGET_MIPS)
-        "mips",
-        "mipsel",
-        "74Kf",
-        "ttyGF",
-        "virtio-blk-device",
-        "virtio-net-device",
-        {IMAGE_TYPE_SD_CARD, IMAGE_TYPE_VENDOR, IMAGE_TYPE_ENCRYPTION_KEY,
-         IMAGE_TYPE_USER_DATA, IMAGE_TYPE_CACHE, IMAGE_TYPE_SYSTEM},
+        {IMAGE_TYPE_SD_CARD, IMAGE_TYPE_ENCRYPTION_KEY, IMAGE_TYPE_SYSTEM,
+         IMAGE_TYPE_USER_DATA, IMAGE_TYPE_VENDOR, IMAGE_TYPE_CACHE},
         {NULL},
 #elif defined(TARGET_X86_64)
         "x86_64",
@@ -671,12 +651,7 @@ private:
                                                    bool writable) {
         int apiLevel = avdInfo_getApiLevel(m_avd);
 
-#if defined(TARGET_X86_64) || defined(TARGET_I386)
-        /* for x86, 'if=none' is necessary for virtio blk*/
         std::string driveParam("if=none,");
-#else
-        std::string driveParam;
-#endif
 
         std::string deviceParam;
         std::string bufferString;
@@ -705,13 +680,13 @@ private:
                             get_qcow2_image_basename(sysImagePath).c_str()));
                     filePath = allocatedPath.get();
                     driveParam +=
-                            StringFormat("index=%d,id=system,if=none,file=%s",
+                            StringFormat("index=%d,id=system,file=%s",
                                          m_driveIndex++, filePath.data());
                 } else {
                     qCow2Format = false;
                     filePath = sysImagePath.c_str();
                     driveParam += StringFormat(
-                            "index=%d,id=system,if=none,file=%s"
+                            "index=%d,id=system,file=%s"
                             ",read-only",
                             m_driveIndex++, filePath.data());
                 }
@@ -740,13 +715,13 @@ private:
                             get_qcow2_image_basename(vendorImagePath).c_str()));
                     filePath = allocatedPath.get();
                     driveParam +=
-                            StringFormat("index=%d,id=vendor,if=none,file=%s",
+                            StringFormat("index=%d,id=vendor,file=%s",
                                          m_driveIndex++, filePath.data());
                 } else {
                     qCow2Format = false;
                     filePath = vendorImagePath.c_str();
                     driveParam += StringFormat(
-                            "index=%d,id=vendor,if=none,file=%s"
+                            "index=%d,id=vendor,file=%s"
                             ",read-only",
                             m_driveIndex++, filePath.data());
                 }
@@ -757,7 +732,7 @@ private:
                 filePath = m_hw->disk_cachePartition_path;
                 bufferString = StringFormat("%s.qcow2", filePath.data());
                 driveParam +=
-                        StringFormat("index=%d,id=cache,if=none,file=%s",
+                        StringFormat("index=%d,id=cache,file=%s",
                                      m_driveIndex++, bufferString.c_str());
                 deviceParam = StringFormat("%s,drive=cache",
                                            kTarget.storageDeviceType);
@@ -766,7 +741,7 @@ private:
                 filePath = m_hw->disk_dataPartition_path;
                 bufferString = StringFormat("%s.qcow2", filePath.data());
                 driveParam +=
-                        StringFormat("index=%d,id=userdata,if=none,file=%s",
+                        StringFormat("index=%d,id=userdata,file=%s",
                                      m_driveIndex++, bufferString.c_str());
                 deviceParam = StringFormat("%s,drive=userdata",
                                            kTarget.storageDeviceType);
@@ -777,13 +752,18 @@ private:
                     filePath = m_hw->hw_sdCard_path;
                     bufferString = StringFormat("%s.qcow2", filePath.data());
                     driveParam +=
-                            StringFormat("index=%d,id=sdcard,if=none,file=%s",
+                            StringFormat("index=%d,id=sdcard,file=%s",
                                          m_driveIndex++, bufferString.c_str());
                     deviceParam = StringFormat("%s,drive=sdcard",
                                                kTarget.storageDeviceType);
                 } else {
-                    /* no sdcard is defined */
-                    return {};
+                    qCow2Format = false;
+                    driveParam += StringFormat(
+                            "index=%d,id=sdcard,driver=null-co,"
+                            "read-zeroes=on,read-only",
+                            m_driveIndex++);
+                    deviceParam = StringFormat("%s,drive=sdcard",
+                                               kTarget.storageDeviceType);
                 }
                 break;
             case IMAGE_TYPE_ENCRYPTION_KEY:
@@ -793,7 +773,7 @@ private:
                     filePath = m_hw->disk_encryptionKeyPartition_path;
                     bufferString = StringFormat("%s.qcow2", filePath.data());
                     driveParam +=
-                            StringFormat("index=%d,id=encrypt,if=none,file=%s",
+                            StringFormat("index=%d,id=encrypt,file=%s",
                                          m_driveIndex++, bufferString.c_str());
                     deviceParam = StringFormat("%s,drive=encrypt",
                                                kTarget.storageDeviceType);
@@ -2661,10 +2641,7 @@ extern "C" int main(int argc, char** argv) {
 
     // Make sure we always use the custom Android CPU definition.
     args.add("-cpu");
-#if defined(TARGET_MIPS)
-    args.add((hw->hw_cpu_model && hw->hw_cpu_model[0]) ? hw->hw_cpu_model
-                                                       : kTarget.qemuCpu);
-#elif defined(CONFIG_LINUX) && defined(TARGET_X86_64)
+#if defined(CONFIG_LINUX) && defined(TARGET_X86_64)
     // Add "-xts" to turn on tweaks only made for xts
     if (opts->xts) {
         if (feature_is_enabled(kFeature_AndroidVirtualizationFramework)) {

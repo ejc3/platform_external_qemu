@@ -12,6 +12,7 @@
 #include "android/utils/timezone.h"
 
 #include "aemu/base/memory/ScopedPtr.h"
+#include "aemu/base/system/Win32UnicodeString.h"
 #include "android/utils/bufprint.h"
 #include "android/utils/debug.h"
 #include "android/utils/file_io.h"
@@ -43,6 +44,9 @@ static const char* get_zoneinfo_timezone( void );  /* forward */
 static char         android_timezone0[256];
 static const char*  android_timezone;
 
+/* Written by bufprint_zoneinfo_timezone() when the timezone is unknown. */
+static const char   kUnknownTimezone[] = "Unknown/Unknown";
+
 static int
 check_timezone_is_zoneinfo(const char*  tz)
 {
@@ -71,7 +75,7 @@ bufprint_zoneinfo_timezone( char*  p, char*  end )
     const char*  tz = get_zoneinfo_timezone();
 
     if (tz == NULL || !check_timezone_is_zoneinfo(tz))
-        return bufprint(p, end, "Unknown/Unknown");
+        return bufprint(p, end, "%s", kUnknownTimezone);
     else
         return bufprint(p, end, "%s", tz);
 }
@@ -397,9 +401,6 @@ get_zoneinfo_timezone( void )
 
 
 /* on Windows, we need to translate the Windows timezone into a ZoneInfo one */
-#ifdef _WIN32
-
-#include <windows.h>
 typedef struct {
     const char*  win_name;
     const char*  zoneinfo_name;
@@ -472,11 +473,11 @@ static const Win32Timezone  _win32_timezones[] = {
     { "Central America Standard Time",    "America/Managua" },
     { "Central America Standard Time",    "America/El_Salvador" },
     { "Central America Standard Time",    "Etc/GMT+6" },
+    { "Central Asia Standard Time",    "Asia/Bishkek" },
     { "Central Asia Standard Time",    "Asia/Almaty" },
     { "Central Asia Standard Time",    "Antarctica/Vostok" },
     { "Central Asia Standard Time",    "Asia/Urumqi" },
     { "Central Asia Standard Time",    "Indian/Chagos" },
-    { "Central Asia Standard Time",    "Asia/Bishkek" },
     { "Central Asia Standard Time",    "Asia/Qyzylorda" },
     { "Central Asia Standard Time",    "Etc/GMT-6" },
     { "Central Brazilian Standard Time",    "America/Cuiaba" },
@@ -615,6 +616,7 @@ static const Win32Timezone  _win32_timezones[] = {
     { "Line Islands Standard Time",    "Etc/GMT-14" },
     { "Lord Howe Standard Time",    "Australia/Lord_Howe" },
     { "Magadan Standard Time",    "Asia/Magadan" },
+    { "Magallanes Standard Time",    "America/Punta_Arenas" },
     { "Marquesas Standard Time",    "Pacific/Marquesas" },
     { "Mauritius Standard Time",    "Indian/Mauritius" },
     { "Mauritius Standard Time",    "Indian/Reunion" },
@@ -631,8 +633,8 @@ static const Win32Timezone  _win32_timezones[] = {
     { "Mountain Standard Time",    "America/Ojinaga" },
     { "Mountain Standard Time",    "America/Boise" },
     { "Mountain Standard Time",    "MST7MDT" },
-    { "Mountain Standard Time (Mexico)",    "America/Chihuahua" },
     { "Mountain Standard Time (Mexico)",    "America/Mazatlan" },
+    { "Mountain Standard Time (Mexico)",    "America/Chihuahua" },
     { "Myanmar Standard Time",    "Asia/Rangoon" },
     { "Myanmar Standard Time",    "Indian/Cocos" },
     { "N. Central Asia Standard Time",    "Asia/Novosibirsk" },
@@ -647,6 +649,7 @@ static const Win32Timezone  _win32_timezones[] = {
     { "North Asia Standard Time",    "Asia/Krasnoyarsk" },
     { "North Asia Standard Time",    "Asia/Novokuznetsk" },
     { "North Korea Standard Time",    "Asia/Pyongyang" },
+    { "Omsk Standard Time",    "Asia/Omsk" },
     { "Pacific SA Standard Time",    "America/Santiago" },
     { "Pacific SA Standard Time",    "Antarctica/Palmer" },
     { "Pacific Standard Time",    "America/Los_Angeles" },
@@ -658,6 +661,7 @@ static const Win32Timezone  _win32_timezones[] = {
     { "Pacific Standard Time (Mexico)",    "America/Santa_Isabel" },
     { "Pakistan Standard Time",    "Asia/Karachi" },
     { "Paraguay Standard Time",    "America/Asuncion" },
+    { "Qyzylorda Standard Time",    "Asia/Qyzylorda" },
     { "Romance Standard Time",    "Europe/Paris" },
     { "Romance Standard Time",    "Europe/Brussels" },
     { "Romance Standard Time",    "Europe/Copenhagen" },
@@ -732,6 +736,8 @@ static const Win32Timezone  _win32_timezones[] = {
     { "Saint Pierre Standard Time",    "America/Miquelon" },
     { "Sakhalin Standard Time",    "Asia/Sakhalin" },
     { "Samoa Standard Time",    "Pacific/Apia" },
+    { "Sao Tome Standard Time",    "Africa/Sao_Tome" },
+    { "Saratov Standard Time",    "Europe/Saratov" },
     { "Singapore Standard Time",    "Asia/Singapore" },
     { "Singapore Standard Time",    "Asia/Brunei" },
     { "Singapore Standard Time",    "Asia/Makassar" },
@@ -751,7 +757,9 @@ static const Win32Timezone  _win32_timezones[] = {
     { "South Africa Standard Time",    "Africa/Lusaka" },
     { "South Africa Standard Time",    "Africa/Harare" },
     { "South Africa Standard Time",    "Etc/GMT-2" },
+    { "South Sudan Standard Time",    "Africa/Juba" },
     { "Sri Lanka Standard Time",    "Asia/Colombo" },
+    { "Sudan Standard Time",    "Africa/Khartoum" },
     { "Syria Standard Time",    "Asia/Damascus" },
     { "Taipei Standard Time",    "Asia/Taipei" },
     { "Tasmania Standard Time",    "Australia/Hobart" },
@@ -789,6 +797,7 @@ static const Win32Timezone  _win32_timezones[] = {
     { "UTC+12",    "Pacific/Funafuti" },
     { "UTC+12",    "Pacific/Wake" },
     { "UTC+12",    "Pacific/Wallis" },
+    { "UTC+13",    "Etc/GMT-13" },
     { "UTC-02",    "Etc/GMT+2" },
     { "UTC-02",    "America/Noronha" },
     { "UTC-02",    "Atlantic/South_Georgia" },
@@ -805,6 +814,7 @@ static const Win32Timezone  _win32_timezones[] = {
     { "Venezuela Standard Time",    "America/Caracas" },
     { "Vladivostok Standard Time",    "Asia/Vladivostok" },
     { "Vladivostok Standard Time",    "Asia/Ust-Nera" },
+    { "Volgograd Standard Time",    "Europe/Volgograd" },
     { "W. Australia Standard Time",    "Australia/Perth" },
     { "W. Australia Standard Time",    "Antarctica/Casey" },
     { "W. Central Africa Standard Time",    "Africa/Lagos" },
@@ -860,51 +870,105 @@ static const Win32Timezone  _win32_timezones[] = {
     { "West Pacific Standard Time",    "Etc/GMT-10" },
     { "Yakutsk Standard Time",    "Asia/Yakutsk" },
     { "Yakutsk Standard Time",    "Asia/Khandyga" },
+    { "Yukon Standard Time",    "America/Whitehorse" },
     { NULL, NULL }
 };
+
+/* Return the zoneinfo name of the Windows timezone |win_name|, or nullptr if
+ * it is not in the table above. */
+static const char*
+lookup_win32_zoneinfo(const char* win_name)
+{
+    if (win_name == nullptr) {
+        return nullptr;
+    }
+    for (const Win32Timezone* win32tz = _win32_timezones;
+         win32tz->win_name != nullptr; win32tz++) {
+        if (!strcmp(win32tz->win_name, win_name)) {
+            return win32tz->zoneinfo_name;
+        }
+    }
+    return nullptr;
+}
+
+const char*
+timezone_win32_to_zoneinfo(const char* key_name, const char* standard_name)
+{
+    const char* zoneinfo = lookup_win32_zoneinfo(key_name);
+    if (zoneinfo == nullptr) {
+        zoneinfo = lookup_win32_zoneinfo(standard_name);
+    }
+    return zoneinfo;
+}
+
+#ifdef _WIN32
+#include <windows.h>
 
 static const char*
 get_zoneinfo_timezone( void )
 {
     if (!android_timezone)
     {
-        char		          tzname[128];
-        time_t		          t = time(NULL);
-        struct tm*            tm = localtime(&t);
-        if (!tm) {
-            D("%s: could not determine current date/time\n", __FUNCTION__);
-            return NULL;
+        // Prefer the registry key name of the timezone (e.g.
+        // "Tokyo Standard Time"): unlike the name returned by strftime("%Z"),
+        // it is not localized (b/532790747, b/574875267).
+        std::string key_name;
+        DYNAMIC_TIME_ZONE_INFORMATION dtzi = {};
+        if (GetDynamicTimeZoneInformation(&dtzi) != TIME_ZONE_ID_INVALID) {
+            key_name = android::base::Win32UnicodeString::convertToUtf8(
+                    dtzi.TimeZoneKeyName);
+        } else {
+            D("%s: GetDynamicTimeZoneInformation() failed: error %lu\n",
+              __FUNCTION__, GetLastError());
         }
-        // The lookup table above doesn't include "Daylight" in its timezone
-        // name. Thus, we always set dst to 0 (b/117424123)
-        struct tm local_tm = *tm;
-        local_tm.tm_isdst = 0;
-        const Win32Timezone*  win32tz = _win32_timezones;
 
-
-        memset(tzname, 0, sizeof(tzname));
-        strftime(tzname, sizeof(tzname) - 1, "%Z", &local_tm);
-
-        for (win32tz = _win32_timezones; win32tz->win_name != NULL; win32tz++)
-            if ( !strcmp(win32tz->win_name, tzname) ) {
-                android_timezone = win32tz->zoneinfo_name;
-                goto Exit;
+        // Fall back to the name reported by the C runtime.
+        char standard_name[128] = "";
+        time_t t = time(nullptr);
+        struct tm* tm = localtime(&t);
+        if (tm) {
+            // The lookup table above doesn't include "Daylight" in its timezone
+            // name. Thus, we always set dst to 0 (b/117424123)
+            struct tm local_tm = *tm;
+            local_tm.tm_isdst = 0;
+            if (strftime(standard_name, sizeof(standard_name), "%Z",
+                         &local_tm) == 0) {
+                standard_name[0] = '\0';
             }
+        }
 
-#if 0  /* TODO */
-    /* we didn't find it, this may come from localized versions of Windows. we're going to explore the registry,
-    * as the code in Postgresql does...
-    */
-#endif
-        D( "%s: could not determine current timezone\n", __FUNCTION__ );
-        return NULL;
+        android_timezone =
+                timezone_win32_to_zoneinfo(key_name.c_str(), standard_name);
+        if (!android_timezone) {
+            D("%s: could not determine current timezone (key name: '%s', "
+              "standard name: '%s')\n",
+              __FUNCTION__, key_name.c_str(), standard_name);
+            return nullptr;
+        }
     }
-Exit:
     D( "emulator: found timezone %s\n", android_timezone );
     return android_timezone;
 }
 
 #endif /* _WIN32 */
+
+int
+timezone_should_inject_boot_property(const char* tzname,
+                                     int wipe_data,
+                                     const char* requested_tzname)
+{
+    if (!check_timezone_is_zoneinfo(tzname) ||
+        !strcmp(tzname, kUnknownTimezone)) {
+        return 0;
+    }
+    // Always send the timezone requested with -timezone. QEMU applies it with
+    // timezone_set(), so it is |tzname|, unless it is not a zoneinfo name, in
+    // which case QEMU ignores it and |tzname| is the host timezone.
+    if (requested_tzname != nullptr && !strcmp(requested_tzname, tzname)) {
+        return 1;
+    }
+    return wipe_data != 0;
+}
 
 int
 timezone_set(const char *tzname)

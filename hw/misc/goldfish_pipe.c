@@ -1580,6 +1580,7 @@ static int goldfish_pipe_load_v1(QEMUFile* file, PipeDevice* dev) {
     /* Reconstruct wanted pipes list. */
     HwPipe** wanted_pipe_list_end = &dev->wanted_pipes_first;
     *wanted_pipe_list_end = NULL;
+    HwPipe* wanted_pipe_prev = NULL;
     int wanted_pipes_count = qemu_get_be32(file);
     uint64_t channel;
     for (pipe_n = 0; pipe_n < wanted_pipes_count; ++pipe_n) {
@@ -1587,10 +1588,14 @@ static int goldfish_pipe_load_v1(QEMUFile* file, PipeDevice* dev) {
         HwPipe* pipe = g_hash_table_lookup(dev->pipes_by_channel,
                                            hash_cast_key_from_channel(&channel));
         if (pipe) {
-            pipe->wanted_prev = *wanted_pipe_list_end;
-            pipe->wanted_next = NULL;
-            *wanted_pipe_list_end = pipe;
-            wanted_pipe_list_end = &(pipe->wanted_next);
+            if (!pipe->wanted_next && !pipe->wanted_prev &&
+                pipe != dev->wanted_pipes_first) {
+                pipe->wanted_prev = wanted_pipe_prev;
+                pipe->wanted_next = NULL;
+                *wanted_pipe_list_end = pipe;
+                wanted_pipe_list_end = &(pipe->wanted_next);
+                wanted_pipe_prev = pipe;
+            }
         } else {
             free(force_closed_pipes);
             return -EIO;
@@ -1619,10 +1624,13 @@ static int goldfish_pipe_load_v1(QEMUFile* file, PipeDevice* dev) {
         pipe->closed = 1;
         if (!pipe->wanted_next &&
             !pipe->wanted_prev &&
+            pipe != dev->wanted_pipes_first &&
             pipe != dev->wanted_pipe_after_channel_high) {
-            pipe->wanted_prev = *wanted_pipe_list_end;
+            pipe->wanted_prev = wanted_pipe_prev;
+            pipe->wanted_next = NULL;
             *wanted_pipe_list_end = pipe;
             wanted_pipe_list_end = &(pipe->wanted_next);
+            wanted_pipe_prev = pipe;
         }
     }
 

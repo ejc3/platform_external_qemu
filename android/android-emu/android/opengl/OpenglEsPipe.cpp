@@ -15,6 +15,7 @@
 #include "aemu/base/async/Looper.h"
 #include "aemu/base/files/PathUtils.h"
 #include "aemu/base/files/StreamSerializing.h"
+#include "aemu/base/logging/Log.h"
 #include "aemu/base/threads/FunctorThread.h"
 #include "android/console.h"
 #include "android/hw-sensors.h"
@@ -254,6 +255,15 @@ public:
             isWorking = (bool)loadStream->getBe32();
             android::base::loadBuffer(loadStream, &mDataForReading);
             mDataForReadingLeft = loadStream->getBe32();
+            // |mDataForReadingLeft| indexes backwards from the end of
+            // |mDataForReading| in onGuestRecv(); a larger value would
+            // underflow into a wild read pointer.
+            if (mDataForReadingLeft > mDataForReading.size()) {
+                dwarning("%s: snapshot mDataForReadingLeft=%u exceeds buffer size %zu, "
+                         "clamping", __func__, mDataForReadingLeft,
+                         mDataForReading.size());
+                mDataForReadingLeft = mDataForReading.size();
+            }
         }
 
         uint32_t virtioGpuContextId = std::numeric_limits<uint32_t>::max();
