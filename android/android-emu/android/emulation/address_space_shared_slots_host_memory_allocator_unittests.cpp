@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "host-common/address_space_shared_slots_host_memory_allocator.h"
+#include <cstdint>
 #include <gtest/gtest.h>
 
 namespace android {
@@ -58,6 +59,35 @@ AddressSpaceHwFuncs create_AddressSpaceHwFuncs() {
     hw.getPhysAddrStartLocked = &getPhysAddrStartLocked;
 
     return hw;
+}
+
+uint32_t getGuestPageSize() {
+    return 4096;
+}
+
+uint64_t g_nextSharedRegionOffset = 4096;
+
+int allocUniqueSharedHostRegionLocked(uint64_t page_aligned_size,
+                                      uint64_t* offset) {
+    *offset = g_nextSharedRegionOffset;
+    g_nextSharedRegionOffset += page_aligned_size;
+    return 0;
+}
+
+AddressSpaceDevicePingInfo createAllocateRequest(uint64_t size) {
+    AddressSpaceDevicePingInfo req = {};
+    req.metadata = static_cast<uint64_t>(
+        ASSSHMAC::HostMemoryAllocatorCommand::Allocate);
+    req.size = size;
+    return req;
+}
+
+AddressSpaceDevicePingInfo createUnallocateRequest(uint64_t phys_addr) {
+    AddressSpaceDevicePingInfo req = {};
+    req.metadata = static_cast<uint64_t>(
+        ASSSHMAC::HostMemoryAllocatorCommand::Unallocate);
+    req.phys_addr = phys_addr;
+    return req;
 }
 }
 
@@ -178,6 +208,131 @@ TEST(MemBlock, unallocate) {
     block.unallocate(off30, 30);
 
     EXPECT_TRUE(block.isAllFree());
+}
+
+TEST(MemBlock, allocateZeroSize) {
+    const struct address_space_device_control_ops ops =
+        create_address_space_device_control_ops();
+
+    const AddressSpaceHwFuncs hw = create_AddressSpaceHwFuncs();
+
+    MemBlock block(&ops, &hw, 100);
+    EXPECT_TRUE(block.isAllFree());
+
+    EXPECT_EQ(block.allocate(0), 0);
+    EXPECT_TRUE(block.isAllFree());
+
+    uint64_t off50 = block.allocate(50);
+    EXPECT_GE(off50, 2020 + 100 * 10);
+    EXPECT_FALSE(block.isAllFree());
+
+    EXPECT_EQ(block.allocate(0), 0);
+
+    block.unallocate(off50, 50);
+    EXPECT_TRUE(block.isAllFree());
+}
+
+class AddressSpaceSharedSlotsHostMemoryAllocatorContextTest
+    : public ::testing::Test {
+protected:
+    void SetUp() override {
+        g_nextSharedRegionOffset = 4096;
+        m_ops = create_address_space_device_control_ops();
+        m_hw = {};
+        m_hw.allocSharedHostRegionLocked = &allocUniqueSharedHostRegionLocked;
+        m_hw.freeSharedHostRegionLocked = &freeSharedHostRegionLocked;
+        m_hw.getPhysAddrStartLocked = &getPhysAddrStartLocked;
+        m_hw.getGuestPageSize = &getGuestPageSize;
+
+        ASSSHMAC::globalStateClear();
+        m_prevHw = address_space_set_hw_funcs(&m_hw);
+    }
+
+    void TearDown() override {
+        ASSSHMAC::globalStateClear();
+        address_space_set_hw_funcs(m_prevHw);
+    }
+
+    struct address_space_device_control_ops m_ops = {};
+    AddressSpaceHwFuncs m_hw = {};
+    const AddressSpaceHwFuncs* m_prevHw = nullptr;
+};
+
+TEST_F(AddressSpaceSharedSlotsHostMemoryAllocatorContextTest,
+       RejectZeroSizeAllocate) {
+    ASSSHMAC ctx(&m_ops, &m_hw);
+
+    AddressSpaceDevicePingInfo req1 = createAllocateRequest(0);
+    ctx.perform(&req1);
+    EXPECT_NE(req1.metadata, 0);
+
+    AddressSpaceDevicePingInfo req2 = createAllocateRequest(0);
+    ctx.perform(&req2);
+    EXPECT_NE(req2.metadata, 0);
+}
+
+TEST_F(AddressSpaceSharedSlotsHostMemoryAllocatorContextTest,
+       Reject64BitTruncatedZeroAndOverflowSizes) {
+    ASSSHMAC ctx(&m_ops, &m_hw);
+
+    // 4 GiB has low 32 bits == 0; previously truncated by align(int, int) to 0.
+    AddressSpaceDevicePingInfo req4g = createAllocateRequest(0x100000000ULL);
+    ctx.perform(&req4g);
+    EXPECT_NE(req4g.metadata, 0);
+
+    // Sizes above UINT32_MAX - (pageSize - 1) page-align past UINT32_MAX.
+    AddressSpaceDevicePingInfo reqBoundary = createAllocateRequest(0xFFFFF001ULL);
+    ctx.perform(&reqBoundary);
+    EXPECT_NE(reqBoundary.metadata, 0);
+
+    // Near UINT32_MAX cannot page-align within uint32_t bookkeeping.
+    AddressSpaceDevicePingInfo reqUintMax = createAllocateRequest(UINT32_MAX);
+    ctx.perform(&reqUintMax);
+    EXPECT_NE(reqUintMax.metadata, 0);
+}
+
+TEST_F(AddressSpaceSharedSlotsHostMemoryAllocatorContextTest,
+       ZeroSizeDoesNotCauseGcUseAfterFree) {
+    ASSSHMAC ctx1(&m_ops, &m_hw);
+    ASSSHMAC ctx2(&m_ops, &m_hw);
+
+    // Step 1: Zero-size request is rejected and leaves no MemBlock* in ctx1.
+    AddressSpaceDevicePingInfo zeroReq = createAllocateRequest(0);
+    ctx1.perform(&zeroReq);
+    EXPECT_NE(zeroReq.metadata, 0);
+
+    // Step 2: Allocate one page in ctx1 (creates 64 MiB block A).
+    AddressSpaceDevicePingInfo req1 = createAllocateRequest(4096);
+    ctx1.perform(&req1);
+    ASSERT_EQ(req1.metadata, 0);
+    const uint64_t gpa1 = m_hw.getPhysAddrStartLocked() + req1.phys_addr;
+
+    // Step 3: Unallocate gpa1 (block A becomes empty, kept as allowedEmpty=1).
+    AddressSpaceDevicePingInfo unreq1 = createUnallocateRequest(gpa1);
+    ctx1.perform(&unreq1);
+    ASSERT_EQ(unreq1.metadata, 0);
+
+    // Step 4: Fill block A completely from ctx2 (64 MiB).
+    AddressSpaceDevicePingInfo req2a = createAllocateRequest(64u << 20);
+    ctx2.perform(&req2a);
+    ASSERT_EQ(req2a.metadata, 0);
+    const uint64_t gpa2a = m_hw.getPhysAddrStartLocked() + req2a.phys_addr;
+
+    // Step 5: Allocate one more page in ctx2 (creates 64 MiB block B).
+    AddressSpaceDevicePingInfo req2b = createAllocateRequest(4096);
+    ctx2.perform(&req2b);
+    ASSERT_EQ(req2b.metadata, 0);
+    const uint64_t gpa2b = m_hw.getPhysAddrStartLocked() + req2b.phys_addr;
+
+    // Step 6: Free both ctx2 allocations, triggering gcEmptyBlocks(1) to erase
+    // one of the empty MemBlocks from g_blocks.
+    AddressSpaceDevicePingInfo unreq2a = createUnallocateRequest(gpa2a);
+    ctx2.perform(&unreq2a);
+    ASSERT_EQ(unreq2a.metadata, 0);
+
+    AddressSpaceDevicePingInfo unreq2b = createUnallocateRequest(gpa2b);
+    ctx2.perform(&unreq2b);
+    ASSERT_EQ(unreq2b.metadata, 0);
 }
 
 }  // namespace emulation

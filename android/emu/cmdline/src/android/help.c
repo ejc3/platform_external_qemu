@@ -2146,6 +2146,7 @@ static void help_hands_in_space(stralloc_t* out) {
 }
 
 static void help_systemui_renderer(stralloc_t* out) {
+    // experimental 'graphite' renderer is an API 37+ feature, do not advertise
     PRINTF("  Set guest side renderer backend. Available options: skiagl, skiavk\n");
 }
 

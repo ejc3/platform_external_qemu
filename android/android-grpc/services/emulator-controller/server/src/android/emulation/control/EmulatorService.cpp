@@ -125,6 +125,12 @@ namespace android {
 namespace emulation {
 namespace control {
 
+// Converts an absl::Status into a grpc::Status, the status codes map 1:1.
+static Status toGrpcStatus(const absl::Status& status) {
+    return Status(static_cast<::grpc::StatusCode>(status.code()),
+                  std::string(status.message()));
+}
+
 // Logic and data behind the server's behavior.
 class EmulatorControllerImpl final
     : public EmulatorController::WithCallbackMethod_streamLogcat<
@@ -885,8 +891,12 @@ public:
                                        reply.format().height() *
                                        ScreenshotUtils::getBytesPerPixel(*request);
                     if (frameSize > 0) {
-                        entry = mSharedMemoryLibrary.borrow(
+                        auto borrowed = mSharedMemoryLibrary.borrow(
                                 request->transport().handle(), frameSize);
+                        if (!borrowed.ok()) {
+                            return toGrpcStatus(borrowed.status());
+                        }
+                        entry = std::move(borrowed).value();
                     }
                 }
 
@@ -1138,8 +1148,12 @@ public:
         rotation_reply->set_zaxis(zaxis);
         rotation_reply->set_rotation(rotation);
         if (request->transport().channel() == ImageTransport::MMAP) {
-            shm = mSharedMemoryLibrary.borrow(
+            auto borrowed = mSharedMemoryLibrary.borrow(
                     request->transport().handle(), cPixels);
+            if (!borrowed.ok()) {
+                return toGrpcStatus(borrowed.status());
+            }
+            shm = std::move(borrowed).value();
             if (!shm || !shm->isOpen() || !shm->isMapped()) {
                 return Status(::grpc::StatusCode::INVALID_ARGUMENT,
                               "Unable to open or map shared memory region: " +

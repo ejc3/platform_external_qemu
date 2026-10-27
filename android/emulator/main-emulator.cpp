@@ -1411,8 +1411,7 @@ static bool is32bitImageOn64bitRanchuKernel(const char* avdName,
                                             const char* sysDir,
                                             const char* androidOut) {
     // only appliable to 32bit image
-    if (strcmp(avdArch, "x86") && strcmp(avdArch, "arm") &&
-        strcmp(avdArch, "mips")) {
+    if (strcmp(avdArch, "x86") && strcmp(avdArch, "arm")) {
         return false;
     }
 

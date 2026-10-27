@@ -15,6 +15,7 @@
 #include "android/files/TemporaryFile.h"
 
 #include "android/base/system/System.h"
+#include "android/base/testing/TestTempDir.h"
 
 #include <gtest/gtest.h>
 
@@ -37,6 +38,26 @@ TEST(TemporaryFile, Basic) {
 TEST(TemporaryFile, Prefix) {
     TemporaryFile tf("my-prefix");
     EXPECT_TRUE(tf.valid());
+}
+
+TEST(TemporaryFile, Directory) {
+    android::base::TestTempDir dir("temporary-file-test");
+    ASSERT_FALSE(dir.pathString().empty());
+
+    std::string path;
+    {
+        TemporaryFile tf("in-dir", dir.pathString());
+        ASSERT_TRUE(tf.valid());
+        path = tf.path();
+        EXPECT_EQ(0u, path.find(dir.pathString())) << path;
+        EXPECT_TRUE(android::base::System::get()->pathExists(path));
+    }
+    EXPECT_FALSE(android::base::System::get()->pathExists(path));
+}
+
+TEST(TemporaryFile, EmptyDirectoryIsInvalid) {
+    TemporaryFile tf("in-dir", "");
+    EXPECT_FALSE(tf.valid());
 }
 
 }  // namespace files

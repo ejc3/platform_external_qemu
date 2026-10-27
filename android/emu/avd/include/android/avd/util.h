@@ -111,7 +111,7 @@ char* propertyFile_getTargetAbi(const FileData* data);
  *
  * |data| is a FileData instance holding the build.prop contents.
  * Returns a new string that must be freed by the caller, which can
- * be 'arm', 'x86, 'mips', etc..., or NULL if if cannot be determined.
+ * be 'arm', 'x86', etc..., or NULL if it cannot be determined.
  */
 char* propertyFile_getTargetArch(const FileData* data);
 

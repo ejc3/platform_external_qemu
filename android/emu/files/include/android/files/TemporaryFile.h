@@ -48,27 +48,36 @@ public:
      * @param prefix The prefix for the temporary filename. Defaults to
      * "tempfile".
      */
-    TemporaryFile(const std::string& prefix = "tempfile") {
-#ifdef _WIN32
-        WCHAR tempPath[MAX_PATH];
-        DWORD ret = GetTempPathW(MAX_PATH, tempPath);
-        if (ret > MAX_PATH || ret == 0) {
-            // Failed to get temp path
+    TemporaryFile(const std::string& prefix = "tempfile")
+        : TemporaryFile(prefix, defaultDirectory()) {}
+
+    /**
+     * @brief Constructs a TemporaryFile object in the given directory.
+     *
+     * Creates a temporary file in |directory|. The filename will start with
+     * the given prefix. The file will not be created (valid() returns false)
+     * if |directory| is empty or the file cannot be created.
+     *
+     * @param prefix The prefix for the temporary filename.
+     * @param directory The directory in which the file is created.
+     */
+    TemporaryFile(const std::string& prefix, const std::string& directory) {
+        if (directory.empty()) {
             return;
         }
-
+#ifdef _WIN32
+        android::base::Win32UnicodeString wdir(directory);
         WCHAR tempFileName[MAX_PATH];
         android::base::Win32UnicodeString wprefix(prefix);
-        UINT unique =
-                GetTempFileNameW(tempPath, wprefix.c_str(), 0, tempFileName);
+        UINT unique = GetTempFileNameW(wdir.c_str(), wprefix.c_str(), 0,
+                                       tempFileName);
         if (unique == 0) {
             // Failed to create temp file
             return;
         }
         mPath = android::base::Win32UnicodeString::convertToUtf8(tempFileName);
 #else
-        std::string temp_dir = android::base::System::get()->getTempDir();
-        mPath = android::base::PathUtils::join(temp_dir, prefix + "-XXXXXX");
+        mPath = android::base::PathUtils::join(directory, prefix + "-XXXXXX");
 
         // mkstemp needs a writable C string.
         std::vector<char> path_vec(mPath.begin(), mPath.end());
@@ -116,6 +125,22 @@ public:
     bool valid() const { return !mPath.empty(); }
 
 private:
+    // The directory used by the default constructor: GetTempPath() on
+    // Windows, System::getTempDir() elsewhere.
+    static std::string defaultDirectory() {
+#ifdef _WIN32
+        WCHAR tempPath[MAX_PATH];
+        DWORD ret = GetTempPathW(MAX_PATH, tempPath);
+        if (ret > MAX_PATH || ret == 0) {
+            // Failed to get temp path
+            return {};
+        }
+        return android::base::Win32UnicodeString::convertToUtf8(tempPath);
+#else
+        return android::base::System::get()->getTempDir();
+#endif
+    }
+
     DISALLOW_COPY_AND_ASSIGN(TemporaryFile);
     std::string mPath;
 };

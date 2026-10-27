@@ -3780,6 +3780,18 @@ void hideDockIcon_macImpl(void);
 void System::disableAppNap() {
 #ifdef __APPLE__
     disableAppNap_macImpl();
+#elif defined(_WIN32)
+    PROCESS_POWER_THROTTLING_STATE powerThrottling = {};
+    powerThrottling.Version = PROCESS_POWER_THROTTLING_CURRENT_VERSION;
+    powerThrottling.ControlMask = PROCESS_POWER_THROTTLING_EXECUTION_SPEED;
+    powerThrottling.StateMask = 0;
+
+    if (!SetProcessInformation(GetCurrentProcess(), ProcessPowerThrottling,
+                               &powerThrottling, sizeof(powerThrottling))) {
+        const DWORD err = GetLastError();
+        dwarning("Failed to disable power throttling: %s (error %lu)",
+                 Win32Utils::getErrorString(err).c_str(), err);
+    }
 #endif
 }
 

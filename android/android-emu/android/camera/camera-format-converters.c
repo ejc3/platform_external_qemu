@@ -1863,22 +1863,19 @@ int convert_frame_slow(const void* src_frame,
             return -1;
         }
 
-        if (framebuffers[n].framebuffer_size) {
-            size_t size_required = 0;
+        size_t size_required = 0;
 
-            if (!calculate_framebuffer_size(framebuffers[n].pixel_format,
-                                            width, height, &size_required)) {
-                E("%s: Can't calculate the required size for framebuffer[%d]",
-                __FUNCTION__, n);
-                return -1;
-            }
+        if (!calculate_framebuffer_size(framebuffers[n].pixel_format,
+                                        width, height, &size_required)) {
+            E("%s: Can't calculate the required size for framebuffer[%d]",
+              __FUNCTION__, n);
+            return -1;
+        }
 
-            if (size_required > framebuffers[n].framebuffer_size) {
-                E("%s: framebuffer[%d] framebuffer is too small (%zu bytes), %zu bytes are required",
-                __FUNCTION__, n, framebuffers[n].framebuffer_size, size_required);
-                return -1;
-
-            }
+        if (size_required > framebuffers[n].framebuffer_size) {
+            E("%s: framebuffer[%d] framebuffer is too small (%zu bytes), %zu bytes are required",
+              __FUNCTION__, n, framebuffers[n].framebuffer_size, size_required);
+            return -1;
         }
 
         /* Note that we need to apply white balance, exposure compensation, etc.
@@ -2227,41 +2224,39 @@ int convert_frame_fast(const void* src_frame,
         }
 
         // Convert to the target framebuffer formats.
-        void* dest = result_frame->framebuffers[n].framebuffer;
-        if (!dest) {
+        void* const dst_framebuffer = result_frame->framebuffers[n].framebuffer;
+        if (!dst_framebuffer) {
             E("%s: framebuffers[%d].framebuffer is NULL", __FUNCTION__, n);
             return -1;
         }
 
-        if (result_frame->framebuffers[n].framebuffer_size) {
-            const size_t dst_framebuffer_size =
-                    result_frame->framebuffers[n].framebuffer_size;
-            size_t size_required = 0;
+        const size_t dst_framebuffer_size =
+                result_frame->framebuffers[n].framebuffer_size;
+        size_t size_required = 0;
 
-            if (!calculate_framebuffer_size(result_frame->framebuffers[n].pixel_format,
-                                            result_width, result_height, &size_required)) {
-                E("%s: Can't calculate the required size for framebuffer[%d]",
-                __FUNCTION__, n);
-                return -1;
-            }
+        if (!calculate_framebuffer_size(result_frame->framebuffers[n].pixel_format,
+                                        result_width, result_height, &size_required)) {
+            E("%s: Can't calculate the required size for framebuffer[%d]",
+              __FUNCTION__, n);
+            return -1;
+        }
 
-            if (size_required > dst_framebuffer_size) {
-                E("%s: framebuffer[%d] framebuffer is too small (%zu bytes), %zu bytes are required",
-                __FUNCTION__, n, dst_framebuffer_size, size_required);
-                return -1;
-            }
+        if (size_required > dst_framebuffer_size) {
+            E("%s: framebuffer[%d] framebuffer is too small (%zu bytes), %zu bytes are required",
+              __FUNCTION__, n, dst_framebuffer_size, size_required);
+            return -1;
         }
 
         const uint32_t dest_format = pixel_format_to_libyuv(
                 result_frame->framebuffers[n].pixel_format);
 
         if (dest_format == V4L2_PIX_FMT_YUV420) {
-            memcpy(dest, src_y, src_size);
+            memcpy(dst_framebuffer, src_y, src_size);
         } else if (dest_format == V4L2_PIX_FMT_YVU420) {
             // YVU420 is 16-byte aligned, but there is no way to specify u and v
             // with ConvertFromI420; manually convert it to YUV420 (swapping U
             // and V) with libyuv's I420Copy.
-            uint8_t* dest_y = dest;
+            uint8_t* dest_y = dst_framebuffer;
             uint8_t* dest_v = dest_y + src_info.y_size;
             uint8_t* dest_u = dest_v + src_info.u_or_v_size;
 
@@ -2286,7 +2281,7 @@ int convert_frame_fast(const void* src_frame,
                                      src_info.u_or_v_stride,  // u_stride
                                      src_v,                   // v
                                      src_info.u_or_v_stride,  // v_stride
-                                     dest,                    // dst_sample
+                                     dst_framebuffer,         // dst_sample
                                      0,              // dst_sample_stride
                                      result_width,   // width
                                      result_height,  // height

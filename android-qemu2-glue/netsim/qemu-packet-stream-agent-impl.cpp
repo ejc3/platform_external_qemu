@@ -43,6 +43,7 @@ extern "C" {
 #include "qapi/error.h"
 #include "migration/vmstate.h"
 #include "hw/qdev-core.h"
+#include "qemu/main-loop.h"
 }
 // IWYU pragma: end_keep
 // clang-format on
@@ -95,7 +96,7 @@ static int netsim_chr_write(Chardev* chr, const uint8_t* buf, int len) {
     std::shared_ptr<PacketStreamerTransport> transport;
     {
         const std::lock_guard<std::mutex> lock(gActiveDevicesLock);
-        transport = netsim->transport.lock();
+        transport = netsim->impl->transport.lock();
     }
     if (transport) {
         DD("Obtained lock, transporting.");
@@ -115,7 +116,7 @@ bool set_netsim_device_transport(
     if (!netsim || gActiveDevices.find(netsim) == gActiveDevices.end()) {
         return false;
     }
-    netsim->transport = transport;
+    netsim->impl->transport = transport;
     return true;
 }
 }  // namespace qemu2
@@ -165,21 +166,33 @@ static void netsim_chr_open(Chardev* chr,
     *be_opened = true;
 }
 
+static void netsim_chr_incoming_bh(void* opaque) {
+    PacketStreamChardev* netsim = NETSIM_CHARDEV(opaque);
+    std::vector<std::vector<uint8_t>> packets;
+    {
+        const std::lock_guard<std::mutex> lock(netsim->impl->incoming_mutex);
+        packets.swap(netsim->impl->incoming_packets);
+    }
+    for (auto& packet : packets) {
+        qemu_chr_be_write(&netsim->parent, packet.data(), packet.size());
+    }
+}
+
 static void netsim_chr_cleanup(Object* o) {
     PacketStreamChardev* netsim = NETSIM_CHARDEV(o);
     std::shared_ptr<PacketStreamerTransport> transport;
     {
         const std::lock_guard<std::mutex> lock(gActiveDevicesLock);
         gActiveDevices.erase(netsim);
-        transport = netsim->transport.lock();
-        netsim->transport.reset();
+        transport = netsim->impl->transport.lock();
+        netsim->impl->transport.reset();
     }
     if (transport) {
         transport->cancel();
     }
 
-    // Constructed using placement new, so we will manually destruct it.
-    netsim->transport.~weak_ptr();
+    delete netsim->impl;
+    netsim->impl = nullptr;
 }
 
 static int netsim_chr_machine_done_hook(Chardev* chr) {
@@ -187,7 +200,7 @@ static int netsim_chr_machine_done_hook(Chardev* chr) {
     std::shared_ptr<PacketStreamerTransport> transport;
     {
         const std::lock_guard<std::mutex> lock(gActiveDevicesLock);
-        transport = netsim->transport.lock();
+        transport = netsim->impl->transport.lock();
     }
     if (transport) {
         transport->qemuConnected();
@@ -197,9 +210,8 @@ static int netsim_chr_machine_done_hook(Chardev* chr) {
 
 static void netsim_chr_init(Object* obj) {
     PacketStreamChardev* netsim = NETSIM_CHARDEV(obj);
-    // Construct the std::weak_ptr member in the pre-allocated memory using
-    // placement new
-    new (&netsim->transport) std::weak_ptr<PacketStreamerTransport>();
+    netsim->impl = new PacketStreamChardev::Impl(
+            qemu_bh_new(netsim_chr_incoming_bh, netsim));
 
     const std::lock_guard<std::mutex> lock(gActiveDevicesLock);
     gActiveDevices.insert(netsim);
@@ -224,7 +236,7 @@ static const TypeInfo char_netsim_type_info = {
 void close_netsim() {
     const std::lock_guard<std::mutex> lock(gActiveDevicesLock);
     for (auto device : gActiveDevices) {
-        if (auto transport = device->transport.lock()) {
+        if (auto transport = device->impl->transport.lock()) {
             transport->cancel();
         }
     }

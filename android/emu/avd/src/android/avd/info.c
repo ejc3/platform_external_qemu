@@ -1371,24 +1371,14 @@ char* avdInfo_getRanchuKernelPath(const AvdInfo* i) {
          * for our target architecture.
          */
         char temp[PATH_MAX], *p = temp, *end = p + sizeof(temp);
-        const char* suffix = "";
-
-        /* mips/ranchu holds distinct images for mips & mips32[r5|r6] */
-        if (!strcmp(i->targetAbi, "mips32r6")) {
-            suffix = "-mips32r6";
-        } else if (!strcmp(i->targetAbi, "mips32r5")) {
-            suffix = "-mips32r5";
-        }
 
         p = bufprint(temp, end,
                      "%s" PATH_SEP "prebuilts" PATH_SEP "qemu-kernel" PATH_SEP
-                     "%s" PATH_SEP "ranchu" PATH_SEP "kernel-qemu%s",
-                     i->androidBuildRoot, i->targetArch, suffix);
+                     "%s" PATH_SEP "ranchu" PATH_SEP "kernel-qemu",
+                     i->androidBuildRoot, i->targetArch);
         if (p >= end || !path_exists(temp)) {
-            /* arm64 and mips64 are special: their kernel-qemu is actually
-             * kernel-ranchu */
-            if (!strcmp(i->targetArch, "arm64") ||
-                !strcmp(i->targetArch, "mips64")) {
+            /* arm64 is special: its kernel-qemu is actually kernel-ranchu */
+            if (!strcmp(i->targetArch, "arm64")) {
                 return avdInfo_getKernelPath(i);
             } else {
                 derror("bad workspace: cannot find prebuilt ranchu kernel in: "
@@ -1428,17 +1418,7 @@ char* avdInfo_getDefaultCachePath(const AvdInfo* i) {
     return _getFullFilePath(i->contentPath, imageName);
 }
 
-static bool is_armish(const AvdInfo* i);
-
 char* avdInfo_getSdCardPath(const AvdInfo* i) {
-    if (i->apiLevel >= 30 && is_armish(i)) {
-        // BUG: 174481551
-        // ignore sdcard for arm when api is >=30, as
-        // it makes setting up the metadata disk id tricky
-        // TODO: figure out better approach
-        dprint("INFO: ignore sdcard for arm at api level >= 30");
-        return NULL;
-    }
     const char* imageName = _imageFileNames[AVD_IMAGE_SDCARD];
     char* path;
 
@@ -1520,14 +1500,6 @@ static bool is_armish(const AvdInfo* i) {
     }
 }
 
-static bool is_mipsish(const AvdInfo* i) {
-    if (strncmp(i->targetAbi, "mips", 4) == 0) {
-        return true;
-    } else {
-        return false;
-    }
-}
-
 /*
     arm is pretty tricky: the system image device path
     changes depending on the number of disks: the last
@@ -1537,19 +1509,6 @@ static bool is_mipsish(const AvdInfo* i) {
 const char* const arm_device_id[] = {
         "a003e00", "a003c00", "a003a00", "a003800", "a003600", "a003400",
 };
-
-const char* const mips_device_id[] = {
-        "1f03d000", "1f03d200", "1f03d400", "1f03d600", "1f03d800",
-};
-
-static bool has_sdcard(const AvdInfo* i) {
-    char* path = avdInfo_getSdCardPath(i);
-    if (path) {
-        free(path);
-        return true;
-    }
-    return false;
-}
 
 static bool has_vendor(const AvdInfo* i) {
     char* path = avdInfo_getVendorInitImagePath(i);
@@ -1577,18 +1536,16 @@ static bool has_encryption(const AvdInfo* i) {
 static char* get_device_path(const AvdInfo* info, const char* image) {
     const char* device_table[6] = {"", "", "", "", "", ""};
     int i = 0;
-    if (has_sdcard(info)) {
-        device_table[i++] = "sdcard";
-    }
-    if (has_vendor(info)) {
-        device_table[i++] = "vendor";
-    }
+    device_table[i++] = "sdcard";
     if (has_encryption(info)) {
         device_table[i++] = "encryption";
     }
-    device_table[i++] = "userdata";
-    device_table[i++] = "cache";
     device_table[i++] = "system";
+    device_table[i++] = "userdata";
+    if (has_vendor(info)) {
+        device_table[i++] = "vendor";
+    }
+    device_table[i++] = "cache";
     int count = ARRAY_SIZE(device_table);
     for (i = 0; i < count; ++i) {
         if (strcmp(image, device_table[i]) == 0) {
@@ -1604,10 +1561,6 @@ static char* get_device_path(const AvdInfo* info, const char* image) {
         snprintf(buf, sizeof(buf),
                  "/dev/block/platform/%s.virtio_mmio/by-name/%s",
                  arm_device_id[i], image);
-    } else if (is_mipsish(info)) {
-        snprintf(buf, sizeof(buf),
-                 "/dev/block/platform/%s.virtio_mmio/by-name/%s",
-                 mips_device_id[i], image);
     }
     return strdup(buf);
 }

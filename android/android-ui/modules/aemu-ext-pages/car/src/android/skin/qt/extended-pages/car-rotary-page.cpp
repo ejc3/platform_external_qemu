@@ -17,11 +17,13 @@
 
 #include <QAbstractButton>                               // for QAbstractButton
 #include <QBitmap>                                       // for QBitmap
+#include <QCoreApplication>                              // for QCoreApplication
 #include <QEvent>       // for QEvent
 #include <QHash>        // for QHash
 #include <QIcon>        // for QIcon
 #include <QLabel>       // for QLabel
 #include <QList>        // for QList
+#include <QMetaObject>  // for QMetaObject
 #include <QPixmap>      // for QPixmap
 #include <QPushButton>  // for QPushButton
 #include <QScreen>      // for QSettings
@@ -112,8 +114,25 @@ CarRotaryPage::CarRotaryPage(QWidget* parent)
         });
     }
 
+    QObject::connect(&mLongPressTimer, &QTimer::timeout, this,
+                     &CarRotaryPage::executeLastPushButtonCmd);
+
     remaskButtons();
     installEventFilter(this);
+}
+
+CarRotaryPage::~CarRotaryPage() {
+    // Turn every pending ADB callback into a no-op: cancel() alone doesn't
+    // guarantee that a callback won't run after this.
+    mLifeToken.reset();
+    mCheckTimer.stop();
+    mLongPressTimer.stop();
+    if (mCheckCommand) {
+        mCheckCommand->cancel();
+    }
+    for (auto& entry : mExecuteCommands) {
+        entry.second->cancel();
+    }
 }
 
 void CarRotaryPage::setAdbInterface(android::emulation::AdbInterface* adb) {
@@ -151,8 +170,6 @@ void CarRotaryPage::toggleButtonPressed(
 
     mLastPushButtonCmd = cmd;
 
-    QObject::connect(&mLongPressTimer, &QTimer::timeout, this,
-                                     &CarRotaryPage::executeLastPushButtonCmd);
     mLongPressTimer.setSingleShot(false);
     mLongPressTimer.setInterval(longPressIntervalMs);
     mLongPressTimer.start();
@@ -187,25 +204,56 @@ void CarRotaryPage::executeLastPushButtonCmd() {
 
 void CarRotaryPage::executeCmd(const string& cmd, const string& arg) {
     if (!cmd.empty()) {
+        if (!mAdb) {
+            D("ADB interface unavailable");
+            return;
+        }
         mAdbExecuteIsActive = true;
         mAdbExecuteTime.restart();
         D("Executing cmd: %s arg: %s", cmd.c_str(), arg.c_str());
-        mAdb->runAdbCommand(
+        const uint64_t commandId = ++mNextExecuteCommandId;
+        std::weak_ptr<bool> weakToken = mLifeToken;
+        auto command = mAdb->runAdbCommand(
                 arg.empty() ? std::vector<std::string>{"shell", cmd}
                             : std::vector<std::string>{"shell", cmd, arg},
-                [this](const OptionalAdbCommandResult& result) {
-                    mAdbExecuteIsActive = false;
-                    D("ADB execute elapsed: %i", mAdbExecuteTime.elapsed());
-
+                // Runs on the ADB thread: hand the result to the Qt thread
+                // instead of touching the page here.
+                [this, weakToken,
+                 commandId](const OptionalAdbCommandResult& result) {
+                    if (weakToken.expired()) {
+                        return;
+                    }
                     string line;
+                    bool hasLine = false;
                     if (result && result->output && getline(*(result->output), line)) {
-                        D("ADB cmd completed. Result: %s", line.c_str());
-                    } else {
-                        D("ADB cmd completed with error.");
+                        hasLine = true;
+                    }
+                    if (auto* app = QCoreApplication::instance()) {
+                        QMetaObject::invokeMethod(
+                                app,
+                                [this, weakToken, commandId, hasLine, line]() {
+                                    if (weakToken.expired()) {
+                                        return;
+                                    }
+                                    mExecuteCommands.erase(commandId);
+                                    mAdbExecuteIsActive =
+                                            !mExecuteCommands.empty();
+                                    D("ADB execute elapsed: %i",
+                                      (int)mAdbExecuteTime.elapsed());
+                                    if (hasLine) {
+                                        D("ADB cmd completed. Result: %s",
+                                          line.c_str());
+                                    } else {
+                                        D("ADB cmd completed with error.");
+                                    }
+                                },
+                                Qt::QueuedConnection);
                     }
                 },
-                kAdbCommandTimeoutMs,
-                true);
+                kAdbCommandTimeoutMs, true);
+        if (command) {
+            mExecuteCommands.emplace(commandId, std::move(command));
+        }
     }
 }
 
@@ -261,28 +309,60 @@ void CarRotaryPage::checkRotaryControllerService() {
         D("ADB interface unavailable");
         return;
     }
+    if (mCheckCommand) {
+        // The previous check hasn't been handled on the Qt thread yet.
+        return;
+    }
     if (isBootCompleted()) {
-        mAdb->runAdbCommand(
-                {"shell", "ps | grep \"com.android.car.rotary\" | awk '{print $9}'"},
-                [this](const android::emulation::OptionalAdbCommandResult& result) {
+        std::weak_ptr<bool> weakToken = mLifeToken;
+        mCheckCommand = mAdb->runAdbCommand(
+                {"shell",
+                 "ps -A | grep \"com.android.car.rotary\" | awk '{print $9}'"},
+                // Runs on the ADB thread: hand the result to the Qt thread
+                // instead of touching the page, its widgets or its timers here.
+                [this,
+                 weakToken](const android::emulation::OptionalAdbCommandResult&
+                                    result) {
+                    if (weakToken.expired()) {
+                        return;
+                    }
                     string line;
                     bool isRunning = false;
-                    if (result && result->exit_code == 0 && result->output &&
-                            getline(*(result->output), line)) {
-                        isRunning = line.find("com.android.car.rotary") != std::string::npos;
+                    if (result && result->exit_code == 0 && result->output) {
+                        while (getline(*(result->output), line)) {
+                            if (line.find("com.android.car.rotary") !=
+                                std::string::npos) {
+                                isRunning = true;
+                                break;
+                            }
+                        }
                     }
-                    mUi->carrotary_warningMessage->setVisible(!isRunning);
-                    if (isRunning) {
-                        D("car rotary service is running, stopping check timer");
-                        mCheckTimer.stop();
+                    if (auto* app = QCoreApplication::instance()) {
+                        QMetaObject::invokeMethod(
+                                app,
+                                [this, weakToken, isRunning]() {
+                                    if (weakToken.expired()) {
+                                        return;
+                                    }
+                                    mCheckCommand.reset();
+                                    mUi->carrotary_warningMessage->setVisible(
+                                            !isRunning);
+                                    if (isRunning) {
+                                        D("car rotary service is running, stopping check timer");
+                                        mCheckTimer.stop();
+                                    }
+                                },
+                                Qt::QueuedConnection);
                     }
                 },
-                kAdbCommandTimeoutMs,
-                true);
+                kAdbCommandTimeoutMs, true);
     }
 }
 
 bool CarRotaryPage::isBootCompleted() {
+    if (mBootCompletedCallback) {
+        return mBootCompletedCallback();
+    }
     // We don't want to block and wait at all for results.
     return android::emulation::control::bootCompleted(std::chrono::milliseconds(0));
 }

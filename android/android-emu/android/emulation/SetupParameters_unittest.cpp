@@ -39,7 +39,6 @@ const AvdSettings kAvdIcsArm = {14, "arm", "ttyS", false};
 const AvdSettings kAvdIcsX86 = {14, "x86", "ttyS", false};
 const AvdSettings kAvdMarshmallowArm = {23, "arm", "ttyAMA", true};
 const AvdSettings kAvdMarshmallowX86 = {23, "x86", "ttyGF", true};
-const AvdSettings kAvdMarshmallowMips = {23, "mips", "ttyS", true};
 const AvdSettings kAvdNougatArm = {25, "arm", "ttyAMA", true};
 const AvdSettings kAvdNougatArm64 = {25, "arm64", "ttyAMA", true};
 const AvdSettings kAvdNougatX86 = {25, "x86", "ttyGF", true};
@@ -180,23 +179,6 @@ TEST(SetupParameters, setupVirtualSerialPorts) {
                     "-serial foo-serial", &kAvdMarshmallowX86, true, true,
             },
 
-            // Marshmallow MIPS
-            {
-                    "console=0", "-serial null",
-                    &kAvdMarshmallowMips, false, false,
-            },
-            {
-                    "console=ttyS0,38400 earlyprintk=ttyS0", "-serial foo-serial",
-                    &kAvdMarshmallowMips, true, false,
-            },
-            {
-                    "console=0",
-                    "-serial foo-serial", &kAvdMarshmallowMips, false, true,
-            },
-            {
-                    "console=ttyS0,38400 earlyprintk=ttyS0",
-                    "-serial foo-serial", &kAvdMarshmallowMips, true, true,
-            },
             // Nougat ARM
             {
                     "keep_bootcon earlyprintk=ttyAMA0 console=0",

@@ -105,26 +105,9 @@ path_getAvdContentPath(const char* avdName)
 
 char*
 propertyFile_getTargetAbi(const FileData* data) {
-    char* abi = propertyFile_getValue((const char*)data->data,
-                                      data->size,
-                                      "ro.product.cpu.abi");
-    if (abi && !strcmp(abi, "mips")) {
-        // mips32[r5|r6] images show cpu.abi as just mips,
-        // but give correct abi in a dalvik property.
-        char* abi2 = propertyFile_getValue((const char*)data->data,
-                                           data->size,
-                                           "dalvik.vm.isa.mips.variant");
-        if (abi2 && !strcmp(abi2, "mips32r6")) {
-            AFREE(abi);
-            abi = abi2;
-        } else if (abi2 && !strcmp(abi2, "mips32r5")) {
-            AFREE(abi);
-            abi = abi2;
-        } else {
-            AFREE(abi2);
-        }
-    }
-    return abi;
+    return propertyFile_getValue((const char*)data->data,
+                                 data->size,
+                                 "ro.product.cpu.abi");
 }
 
 char*
@@ -140,8 +123,6 @@ propertyFile_getTargetArch(const FileData* data) {
             { "armeabi", "arm" },
             { "armeabi-v7a", "arm" },
             { "arm64-v8a", "arm64" },
-            { "mips32r5", "mips" },
-            { "mips32r6", "mips" },
         };
         size_t n;
         for (n = 0; n < sizeof(kData)/sizeof(kData[0]); ++n) {
@@ -585,9 +566,7 @@ emulator_getBackendSuffix(const char* targetArch)
         { "arm", "arm" },
         { "x86", "x86" },
         { "x86_64", "x86" },
-        { "mips", "mips" },
         { "arm64", "arm64" },
-        { "mips64", "mips64" },
         // Add more if needed here.
     };
     size_t n;

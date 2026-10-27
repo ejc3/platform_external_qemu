@@ -344,6 +344,9 @@ static void address_space_allocator_release_block(
     address_space_assert(i < size);
 
     blocks[i].available = 1;
+    /* A freed block must never carry a host mapping size into its next
+     * allocation; see goldfish_address_space_is_oob(). */
+    blocks[i].map_size = 0;
 
     if (before >= 0 && blocks[before].available) {
         if (after < size && blocks[after].available) {
@@ -400,6 +403,7 @@ static uint64_t address_space_allocator_allocate(
 
         address_space_assert(block->size == size);
         block->available = 0;
+        block->map_size = 0;
 
         return block->offset;
     }
@@ -433,6 +437,7 @@ static int address_space_allocator_allocate_fixed(
 
         address_space_assert(block->size == size);
         block->available = 0;
+        block->map_size = 0;
 
         return 0;
     }
@@ -1056,6 +1061,64 @@ static int vmstate_address_space_allocator_pre_load(void *opaque) {
 
     /* VMS_ALLOC will replace this field */
     ANDROID_EMU_ADDRESS_SPACE_FREE_FUNC(allocator->blocks);
+    allocator->blocks = NULL;
+    return 0;
+}
+
+/* The allocator fields (size, capacity, blocks[]) all come straight from the
+ * snapshot. VMS_ALLOC sizes blocks[] by |capacity| with g_malloc() (not
+ * zeroed), while every allocator walk is bounded by |size|. Enforce the
+ * allocator invariants here so a crafted snapshot cannot make a later
+ * release_block()/is_oob() walk past the allocation or trust garbage
+ * map_size values. */
+static int vmstate_address_space_allocator_post_load(void *opaque,
+                                                     int version_id) {
+    struct address_space_allocator *allocator = opaque;
+    uint64_t expected_offset = 0;
+
+    (void)version_id;
+
+    if (allocator->capacity < 1 || allocator->size < 1 ||
+        allocator->size > allocator->capacity || !allocator->blocks) {
+        fprintf(stderr, "%s: invalid allocator size=%d capacity=%d\n",
+                __func__, allocator->size, allocator->capacity);
+        return -EINVAL;
+    }
+
+    for (int i = 0; i < allocator->size; i++) {
+        struct address_block *block = &allocator->blocks[i];
+
+        if (block->size == 0 || block->offset != expected_offset ||
+            block->size > allocator->total_bytes - expected_offset) {
+            fprintf(stderr,
+                    "%s: invalid block %d offset=0x%llx size=0x%llx "
+                    "total_bytes=0x%llx\n",
+                    __func__, i, (unsigned long long)block->offset,
+                    (unsigned long long)block->size,
+                    (unsigned long long)allocator->total_bytes);
+            return -EINVAL;
+        }
+        expected_offset += block->size;
+
+        /* map_size is not part of the snapshot and the storage is not
+         * zero-initialized; host mappings are re-established (and map_size
+         * re-populated via goldfish_address_space_map_hook) when the
+         * memory_state section is loaded. */
+        block->map_size = 0;
+    }
+
+    if (expected_offset != allocator->total_bytes) {
+        fprintf(stderr, "%s: blocks cover 0x%llx bytes but total_bytes=0x%llx\n",
+                __func__, (unsigned long long)expected_offset,
+                (unsigned long long)allocator->total_bytes);
+        return -EINVAL;
+    }
+
+    /* Blocks beyond |size| are unused; keep them deterministic. */
+    for (int i = allocator->size; i < allocator->capacity; i++) {
+        memset(&allocator->blocks[i], 0, sizeof(allocator->blocks[i]));
+    }
+
     return 0;
 }
 
@@ -1064,6 +1127,7 @@ static const VMStateDescription vmstate_address_space_allocator = {
     .version_id = 0,
     .minimum_version_id = 0,
     .pre_load = &vmstate_address_space_allocator_pre_load,
+    .post_load = &vmstate_address_space_allocator_post_load,
     .fields = (VMStateField[]) {
         VMSTATE_INT32(size,         struct address_space_allocator),
         VMSTATE_INT32(capacity,     struct address_space_allocator),
@@ -1145,7 +1209,12 @@ void goldfish_address_space_map_hook(uint64_t gpa, uint64_t size)
 
     for (int i = 0; i < s_current_state->allocator.size; i++) {
         struct address_block *block = &s_current_state->allocator.blocks[i];
-        if (block->available)
+        /* A map (size != 0) only applies to an allocated block, but an unmap
+         * (size == 0) must always clear map_size: the guest can DEALLOCATE
+         * the block before the host unmaps it, and a stale map_size would
+         * later let goldfish_address_space_is_oob() approve accesses to a
+         * region that no longer has a KVM slot behind it. */
+        if (size != 0 && block->available)
             continue;
         if (offset == block->offset) {
             block->map_size = size;
