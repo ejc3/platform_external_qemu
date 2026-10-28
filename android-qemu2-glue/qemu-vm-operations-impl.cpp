@@ -23,6 +23,7 @@ extern "C" {
 
 #include <nlohmann/json.hpp>                          // for basic_json, bas...
 #include "android/console.h"
+#include "android/opengles-gpu-release.h"
 #include "aemu/base/Log.h"                         // for LOG, LogMessage
 #include "aemu/base/Optional.h"                    // for Optional
 #include "aemu/base/StringFormat.h"                // for StringFormatWit...
@@ -316,6 +317,15 @@ static bool qemu_snapshot_save(const char* name,
                                LineConsumerCallback errConsumer) {
     // TODO: remove this or add the same safety checks as Quickboot::save
     android::RecursiveScopedVmLock vmlock;
+    if (android_gpuReleased()) {
+        // The renderer's state is in memory and the GPU is gone: nothing to save from.
+        static const char kErr[] =
+                "Snapshot cannot be saved: the host GPU is released. Run 'gpu retake' first.\n";
+        if (errConsumer) {
+            errConsumer(opaque, kErr, sizeof(kErr) - 1);
+        }
+        return false;
+    }
     if (is_snapshot_save_skipped()) {
         std::string err =
                 std::string("Snapshot cannot be saved. Reason: ") +
@@ -608,6 +618,14 @@ static bool qemu_snapshot_load(const char* name,
                                void* opaque,
                                LineConsumerCallback errConsumer) {
     android::RecursiveScopedVmLock vmlock;
+    if (android_gpuReleased()) {
+        static const char kErr[] =
+                "Snapshot cannot be loaded: the host GPU is released. Run 'gpu retake' first.\n";
+        if (errConsumer) {
+            errConsumer(opaque, kErr, sizeof(kErr) - 1);
+        }
+        return false;
+    }
 
     bool wasVmRunning = runstate_is_running() != 0;
 
