@@ -66,6 +66,8 @@
 #include "android/utils/string.h"
 #include "android/utils/utf8_utils.h"
 #include "android_modem_v2.h"
+#include "android/opengles-gpu-release.h"
+#include "host-common/opengles.h"
 #include "host-common/FeatureControl.h"
 #include "host-common/crash-handler.h"
 #include "host-common/snapshot_interface.h"
@@ -73,6 +75,8 @@
 #include "config-host.h"
 
 #include <atomic>
+#include <chrono>
+#include <string>
 #include <iomanip>
 #include <fstream>
 #include <memory>
@@ -4486,6 +4490,92 @@ static int do_debug(ControlClient client, char* args) {
     return 0;
 }
 
+/********************************************************************************************/
+/********************************************************************************************/
+/*****                                                                                 ******/
+/*****                         G P U   R E L E A S E                                   ******/
+/*****                                                                                 ******/
+/********************************************************************************************/
+/********************************************************************************************/
+
+static long long gpu_elapsed_ms(std::chrono::steady_clock::time_point since) {
+    return std::chrono::duration_cast<std::chrono::milliseconds>(
+                   std::chrono::steady_clock::now() - since)
+            .count();
+}
+
+static int do_gpu_release(ControlClient client, char* args) {
+    (void)args;
+    if (android_gpuReleased()) {
+        control_write(client, "KO: the GPU is already released\r\n");
+        return -1;
+    }
+    const auto start = std::chrono::steady_clock::now();
+    // The guest stays paused until "gpu retake": nothing it sends could be rendered.
+    if (!vmopers(client)->vmPause()) {
+        control_write(client, "KO: could not pause the guest\r\n");
+        return -1;
+    }
+    std::string error;
+    if (!android_gpuRelease(&error)) {
+        vmopers(client)->vmResume();
+        control_write(client, "KO: %s\r\n", error.c_str());
+        return -1;
+    }
+    control_write(client, "released_ms=%lld\r\n", gpu_elapsed_ms(start));
+    return 0;
+}
+
+static int do_gpu_retake(ControlClient client, char* args) {
+    (void)args;
+    if (!android_gpuReleased()) {
+        control_write(client, "KO: the GPU is not released\r\n");
+        return -1;
+    }
+    const auto start = std::chrono::steady_clock::now();
+    std::string error;
+    if (!android_gpuRetake(&error)) {
+        // The guest stays paused: resuming it without a renderer would hang its graphics.
+        control_write(client, "KO: %s\r\n", error.c_str());
+        return -1;
+    }
+    android_resetGuestPostedAFrame();
+    if (!vmopers(client)->vmResume()) {
+        control_write(client, "KO: could not resume the guest\r\n");
+        return -1;
+    }
+    control_write(client, "retaken_ms=%lld\r\n", gpu_elapsed_ms(start));
+    return 0;
+}
+
+static int do_gpu_frame(ControlClient client, char* args) {
+    (void)args;
+    control_write(client, "%s\r\n", android_hasGuestPostedAFrame() ? "posted" : "none");
+    return 0;
+}
+
+static int do_gpu_status(ControlClient client, char* args) {
+    (void)args;
+    control_write(client, "%s\r\n", android_gpuReleased() ? "released" : "held");
+    return 0;
+}
+
+static const CommandDefRec gpu_commands[] = {
+        {"release", "let go of the host GPU",
+         "'gpu release' pauses the guest, keeps the renderer's state in memory, and\r\n"
+         "unloads the host graphics driver, so the emulator holds nothing of the GPU.\r\n"
+         "The guest stays paused until 'gpu retake'.\r\n",
+         NULL, do_gpu_release, NULL},
+        {"retake", "take the host GPU up again",
+         "'gpu retake' loads the host graphics driver, restores the renderer's state\r\n"
+         "onto the GPU present now and resumes the guest.\r\n",
+         NULL, do_gpu_retake, NULL},
+        {"frame", "whether the guest has posted a frame since 'gpu retake'", NULL, NULL,
+         do_gpu_frame, NULL},
+        {"status", "whether the host GPU is released or held", NULL, NULL, do_gpu_status,
+         NULL},
+        {NULL, NULL, NULL, NULL, NULL, NULL}};
+
 static int do_rotate_90_clockwise(ControlClient client, char* args) {
     AvdInfo* avdInfo = getConsoleAgents()->settings->avdInfo();
     if (avdInfo && avdInfo_getAvdFlavor(avdInfo) == AVD_XR) {
@@ -4740,6 +4830,8 @@ extern const CommandDefRec main_commands[] = {
 
         {"rotate", "rotate the screen clockwise by 90 degrees", NULL, NULL,
          do_rotate_90_clockwise, NULL},
+
+        {"gpu", "release or retake the host GPU", NULL, NULL, NULL, gpu_commands},
 
         {"screenrecord", "Records the emulator's display", NULL, NULL, NULL,
          screenrecord_commands},
