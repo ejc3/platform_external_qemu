@@ -320,6 +320,8 @@ public:
         sPipes().erase(this);
     }
 
+    bool channelReleased() const { return mReleasedChannel != nullptr; }
+
     // See releasePipeChannels(). Caller holds sPipesLock.
     void releaseChannel() {
         if (!mChannel) {
@@ -334,19 +336,20 @@ public:
         mChannel.reset();
     }
 
-    // See retakePipeChannels(). Caller holds sPipesLock.
+    // See retakePipeChannels(). Caller holds sPipesLock. A channel the renderer
+    // refuses keeps its saved state for the next attempt.
     bool retakeChannel(const gfxstream::RendererPtr& renderer, std::string* error) {
         if (!mReleasedChannel) {
             return true;
         }
+        mReleasedChannel->rewind();
         android::snapshot::GfxstreamStreamAdapter adapter(mReleasedChannel.get());
         mChannel = renderer->createRenderChannel(&adapter, mVirtioGpuContextId);
-        mReleasedChannel.reset();
         if (!mChannel) {
             *error = "the renderer refused a render channel for a GLES pipe";
-            mIsWorking = false;
             return false;
         }
+        mReleasedChannel.reset();
         mChannel->setEventCallback([this](RenderChannel::State events) {
             onChannelHostEvent(events);
         });
@@ -706,6 +709,16 @@ bool releasePipeChannels(std::string* error) {
         pipe->releaseChannel();
     }
     return true;
+}
+
+bool pipeChannelsReleased() {
+    std::lock_guard<std::mutex> lock(sPipesLock);
+    for (EmuglPipe* pipe : sPipes()) {
+        if (pipe->channelReleased()) {
+            return true;
+        }
+    }
+    return false;
 }
 
 bool retakePipeChannels(const gfxstream::RendererPtr& renderer, std::string* error) {

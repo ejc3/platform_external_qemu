@@ -26,7 +26,11 @@
 //
 // android_gpuRetake() loads the host driver, initializes a frame buffer on the
 // GPU present now, loads the saved state into it, recreates every pipe's render
-// channel from its saved state and resumes the render threads.
+// channel from its saved state and resumes the render threads. After a failure it
+// can be called again: it retries what is still released.
+//
+// android_gpuReleased() is true from a release until a retake has brought back the
+// renderer and every channel.
 // C linkage: opengles.cpp defines its android_* functions in an extern "C" block.
 extern "C" {
 bool android_gpuRelease(std::string* error, bool* restored);

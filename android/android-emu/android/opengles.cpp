@@ -1044,7 +1044,8 @@ const gfxstream::RendererPtr& android_getOpenglesRenderer() {
 }
 
 bool android_gpuReleased() {
-    return sRenderer && sRenderer->isGpuReleased();
+    return sRenderer &&
+           (sRenderer->isGpuReleased() || android::opengl::pipeChannelsReleased());
 }
 
 bool android_gpuRetake(std::string* error) {
@@ -1052,7 +1053,8 @@ bool android_gpuRetake(std::string* error) {
         *error = "the emulator renders without a host GPU renderer";
         return false;
     }
-    if (!sRenderer->retakeGpu(error)) {
+    // A retake that failed after the renderer came back retries the channels alone.
+    if (sRenderer->isGpuReleased() && !sRenderer->retakeGpu(error)) {
         return false;
     }
     if (!android::opengl::retakePipeChannels(sRenderer, error)) {

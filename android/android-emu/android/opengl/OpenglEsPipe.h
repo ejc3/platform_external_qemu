@@ -28,8 +28,11 @@ void registerPipeService();
 // and the renderer's threads paused for a snapshot (Renderer::beginGpuRelease()).
 bool releasePipeChannels(std::string* error);
 // Taking it up again: every pipe whose channel was released gets a new one, loaded
-// from the saved state, on the renderer's new frame buffer.
+// from the saved state, on the renderer's new frame buffer. A pipe whose channel the
+// renderer refuses keeps its saved state, and a later call tries it again.
 bool retakePipeChannels(const gfxstream::RendererPtr& renderer, std::string* error);
+// Whether a pipe still holds a released channel's state.
+bool pipeChannelsReleased();
 
 }  // namespace opengl
 }  // namespace android
