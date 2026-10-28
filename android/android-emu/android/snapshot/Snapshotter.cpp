@@ -9,6 +9,7 @@
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
 
+#include "android/opengles-gpu-release.h"
 #include "android/snapshot/Snapshotter.h"
 
 #include "aemu/base/Log.h"
@@ -591,6 +592,16 @@ bool Snapshotter::checkSafeToSave(const char* name, bool reportMetrics) {
         return false;
     }
 
+    if (android_gpuReleased()) {
+        showError("Unable to save snapshot: the host GPU is released. Run 'gpu retake' first.");
+        if (reportMetrics) {
+            appendFailedSave(android_studio::EmulatorSnapshotSaveState::
+                                 EMULATOR_SNAPSHOT_SAVE_SKIPPED_UNSUPPORTED,
+                             FailureReason::SnapshotsNotSupported);
+        }
+        return false;
+    }
+
     // Check whether skipping snapshot saves was set.
     if (mVmOperations.isSnapshotSaveSkipped()) {
         SnapshotSkipReason vmReason = mVmOperations.getSkipSnapshotSaveReason();
@@ -609,6 +620,10 @@ bool Snapshotter::checkSafeToSave(const char* name, bool reportMetrics) {
 }
 
 bool Snapshotter::checkSafeToLoad(const char* name, bool reportMetrics) {
+    if (android_gpuReleased()) {
+        showError("Unable to load snapshot: the host GPU is released. Run 'gpu retake' first.");
+        return false;
+    }
     if (!name) {
         showError("Unable to load snapshot: No snapshot selected.");
         if (reportMetrics) {

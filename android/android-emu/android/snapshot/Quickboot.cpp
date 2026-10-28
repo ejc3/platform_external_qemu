@@ -8,6 +8,7 @@
 // but WITHOUT ANY WARRANTY; without even the implied warranty of
 // MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
 // GNU General Public License for more details.
+#include "android/opengles-gpu-release.h"
 #include "android/snapshot/Quickboot.h"
 
 #include "absl/strings/str_format.h"
@@ -662,6 +663,14 @@ bool Quickboot::save(std::string_view name) {
                 int(sessionUptimeMs), kMinUptimeForSavingMs);
         reportFailedSave(proto::EmulatorQuickbootSave::
                                  EMULATOR_QUICKBOOT_SAVE_SKIPPED_LOW_UPTIME);
+        return false;
+    }
+
+    if (android_gpuReleased()) {
+        // The renderer's state is in memory and the GPU is gone: nothing to save from.
+        dwarning("Not saving state: the host GPU is released.");
+        reportFailedSave(proto::EmulatorQuickbootSave::
+                                 EMULATOR_QUICKBOOT_SAVE_SKIPPED_UNSUPPORTED);
         return false;
     }
 

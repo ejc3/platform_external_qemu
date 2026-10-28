@@ -25,6 +25,8 @@
 #include "android/console.h"
 #include "android/metrics/DependentMetrics.h"
 #include "android/opengl/GLProcessPipe.h"
+#include "android/opengl/OpenglEsPipe.h"
+#include "android/opengles-gpu-release.h"
 #include "android/snapshot/PathUtils.h"
 #include "android/snapshot/Snapshotter.h"
 #include "android/utils/bufprint.h"
@@ -1039,6 +1041,54 @@ bool android_screenShot(const char* dirname, uint32_t displayId) {
 extern "C" {
 const gfxstream::RendererPtr& android_getOpenglesRenderer() {
     return sRenderer;
+}
+
+bool android_gpuReleased() {
+    return sRenderer &&
+           (sRenderer->isGpuReleased() || android::opengl::pipeChannelsReleased());
+}
+
+bool android_gpuRetake(std::string* error) {
+    if (!sRenderer) {
+        *error = "the emulator renders without a host GPU renderer";
+        return false;
+    }
+    // A retake that failed after the renderer came back retries the channels alone.
+    if (sRenderer->isGpuReleased() && !sRenderer->retakeGpu(error)) {
+        return false;
+    }
+    if (!android::opengl::retakePipeChannels(sRenderer, error)) {
+        return false;
+    }
+    sRenderer->resumeAll();
+    return true;
+}
+
+bool android_gpuRelease(std::string* error, bool* restored) {
+    *restored = true;
+    if (!sRenderer) {
+        *error = "the emulator renders without a host GPU renderer";
+        return false;
+    }
+    if (!sRenderer->beginGpuRelease(error)) {
+        // Nothing was released: beginGpuRelease() resumed what it paused.
+        return false;
+    }
+    if (!android::opengl::releasePipeChannels(error) || !sRenderer->releaseGpu(error)) {
+        // Bring the renderer back: the guest must find it as it left it.
+        std::string retakeError;
+        if (sRenderer->isGpuReleased()) {
+            *restored = android_gpuRetake(&retakeError);
+        } else {
+            *restored = android::opengl::retakePipeChannels(sRenderer, &retakeError);
+            sRenderer->resumeAll();
+        }
+        if (!*restored) {
+            *error += "; taking the GPU up again also failed: " + retakeError;
+        }
+        return false;
+    }
+    return true;
 }
 
 void android_setOpenglesRenderer(gfxstream::RendererPtr* ptr) {

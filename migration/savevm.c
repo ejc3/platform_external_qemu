@@ -2344,6 +2344,16 @@ void hmp_savevm(Monitor *mon, const QDict *qdict)
     qemu_savevm(name, &cb);
 }
 
+/* The Android emulator's 'gpu release' (android/opengles-gpu-release.h): while the
+ * host GPU is released the renderer's state is in memory and nothing can be saved
+ * from or loaded into it. Weak, so builds without the emulator link without it. */
+extern bool android_gpuReleased(void) __attribute__((weak));
+
+static bool gpu_released(void)
+{
+    return android_gpuReleased && android_gpuReleased();
+}
+
 int qemu_savevm(const char* name, const QEMUMessageCallback* messages)
 {
     BlockDriverState *bs, *bs1;
@@ -2361,6 +2371,12 @@ int qemu_savevm(const char* name, const QEMUMessageCallback* messages)
         error_report("Record/replay does not allow making snapshot "
                      "right now. Try once more later.");
         return ret;
+    }
+
+    if (gpu_released()) {
+        messages->out(messages->opaque,
+                      "The host GPU is released; run 'gpu retake' before saving a snapshot.");
+        return -EBUSY;
     }
 
     if (!bdrv_all_can_snapshot(&bs)) {
@@ -2604,6 +2620,12 @@ int qemu_loadvm(const char* name, const QEMUMessageCallback* messages)
         error_report("Record/replay does not allow loading snapshot "
                      "right now. Try once more later.");
         return -EINVAL;
+    }
+
+    if (gpu_released()) {
+        messages->err(messages->opaque, NULL,
+                      "The host GPU is released; run 'gpu retake' before loading a snapshot.");
+        return -EBUSY;
     }
 
     if (!bdrv_all_can_snapshot(&bs)) {

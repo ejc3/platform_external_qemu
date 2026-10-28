@@ -29,7 +29,12 @@
 #include "android/snapshot/GfxstreamStreamAdapter.h"
 #include "android/emulation/control/ScreenCapturer.h"
 
+#include "aemu/base/files/MemStream.h"
+
 #include <atomic>
+#include <memory>
+#include <mutex>
+#include <unordered_set>
 
 #include <assert.h>
 #include <stdlib.h>
@@ -79,6 +84,15 @@ static RecvMode recvMode = RecvMode::Android;
 
 namespace {
 
+class EmuglPipe;
+
+// Every live GLES pipe, for releasing and retaking the host GPU.
+std::mutex sPipesLock;
+std::unordered_set<EmuglPipe*>& sPipes() {
+    static auto* pipes = new std::unordered_set<EmuglPipe*>();
+    return *pipes;
+}
+
 class EmuglPipe : public AndroidPipe {
 public:
 
@@ -105,6 +119,10 @@ public:
             if (!hasRenderer) {
                 return;
             }
+            if (renderer->isGpuReleased()) {
+                dfatal("Cannot load a snapshot while the host GPU is released; run "
+                       "'gpu retake' first.");
+            }
             const int version = stream->getBe32();
             if (version != OPENGL_SAVE_VERSION) {
                 dfatal("Snapshot file version is not compatible!");
@@ -124,6 +142,10 @@ public:
 
         void preSave(android::base::Stream* stream) override {
             if (const auto& renderer = android_getOpenglesRenderer()) {
+                if (renderer->isGpuReleased()) {
+                    dfatal("Cannot save a snapshot while the host GPU is released; run "
+                           "'gpu retake' first.");
+                }
                 renderer->pauseAllPreSave();
                 stream->putByte(1); // hasRenderer
                 stream->putBe32(OPENGL_SAVE_VERSION);
@@ -270,6 +292,7 @@ public:
         if (flags & ANDROID_PIPE_VIRTIO_GPU_BIT) {
             virtioGpuContextId = (uint32_t)(uintptr_t)hwPipe;
         }
+        mVirtioGpuContextId = virtioGpuContextId;
 
         gfxstream::Stream* gfxstreamStream = nullptr;
         std::optional<android::snapshot::GfxstreamStreamAdapter> gfxstreamStreamAdapter;
@@ -288,6 +311,49 @@ public:
         mChannel->setEventCallback([this](RenderChannel::State events) {
             onChannelHostEvent(events);
         });
+        std::lock_guard<std::mutex> lock(sPipesLock);
+        sPipes().insert(this);
+    }
+
+    ~EmuglPipe() {
+        std::lock_guard<std::mutex> lock(sPipesLock);
+        sPipes().erase(this);
+    }
+
+    bool channelReleased() const { return mReleasedChannel != nullptr; }
+
+    // See releasePipeChannels(). Caller holds sPipesLock.
+    void releaseChannel() {
+        if (!mChannel) {
+            return;
+        }
+        auto state = std::make_unique<android::base::MemStream>();
+        {
+            android::snapshot::GfxstreamStreamAdapter adapter(state.get());
+            mChannel->onSave(&adapter);
+        }
+        mReleasedChannel = std::move(state);
+        mChannel.reset();
+    }
+
+    // See retakePipeChannels(). Caller holds sPipesLock. A channel the renderer
+    // refuses keeps its saved state for the next attempt.
+    bool retakeChannel(const gfxstream::RendererPtr& renderer, std::string* error) {
+        if (!mReleasedChannel) {
+            return true;
+        }
+        mReleasedChannel->rewind();
+        android::snapshot::GfxstreamStreamAdapter adapter(mReleasedChannel.get());
+        mChannel = renderer->createRenderChannel(&adapter, mVirtioGpuContextId);
+        if (!mChannel) {
+            *error = "the renderer refused a render channel for a GLES pipe";
+            return false;
+        }
+        mReleasedChannel.reset();
+        mChannel->setEventCallback([this](RenderChannel::State events) {
+            onChannelHostEvent(events);
+        });
+        return true;
     }
 
     //////////////////////////////////////////////////////////////////////////
@@ -295,6 +361,9 @@ public:
 
     virtual void onSave(android::base::Stream* stream) override {
         DD("%s: saving GLES pipe state for hwpipe=%p", __FUNCTION__, mHwPipe);
+        if (!mChannel) {
+            dfatal("Cannot save a GLES pipe while the host GPU is released.");
+        }
         stream->putBe32(mIsWorking);
         android::base::saveBuffer(stream, mDataForReading);
         stream->putBe32(mDataForReadingLeft);
@@ -306,7 +375,9 @@ public:
     virtual void onGuestClose(PipeCloseReason reason) override {
         D("%s", __func__);
         mIsWorking = false;
-        mChannel->stop();
+        if (mChannel) {
+            mChannel->stop();
+        }
         // Make sure there's no operation scheduled for this pipe instance to
         // run on the main thread.
         abortPendingOperation();
@@ -319,6 +390,10 @@ public:
         unsigned ret = 0;
         if (mDataForReadingLeft > 0) {
             ret |= PIPE_POLL_IN;
+        }
+        if (!mChannel) {
+            // The host GPU is released; the guest stays paused until it is back.
+            return ret;
         }
         ChannelState state = mChannel->state();
         if ((state & ChannelState::CanRead) != 0) {
@@ -348,6 +423,9 @@ public:
         auto buff = buffers;
         const auto buffEnd = buff + numBuffers;
         while (buff != buffEnd) {
+            if (mDataForReadingLeft == 0 && !mChannel) {
+                return len > 0 ? len : PIPE_ERROR_AGAIN;
+            }
             if (mDataForReadingLeft == 0) {
                 if (android::opengl::recvMode == android::opengl::RecvMode::Android) {
                     // No data left, read a new chunk from the channel.
@@ -479,7 +557,9 @@ public:
     }
 
     virtual void waitGuestRecv() const override {
-        mChannel->waitUntilReadable();
+        if (mChannel) {
+            mChannel->waitUntilReadable();
+        }
     }
 
     virtual int onGuestSend(const AndroidPipeBuffer* buffers,
@@ -490,6 +570,9 @@ public:
         if (!mIsWorking) {
             DD("%s: pipe already closed!", __func__);
             return PIPE_ERROR_IO;
+        }
+        if (!mChannel) {
+            return PIPE_ERROR_AGAIN;
         }
 
         // Count the total bytes to send.
@@ -519,7 +602,9 @@ public:
     }
 
     virtual void waitGuestSend() const override {
-        mChannel->waitUntilWritable();
+        if (mChannel) {
+            mChannel->waitUntilWritable();
+        }
     }
 
     virtual void onGuestWantWakeOn(int flags) override {
@@ -534,6 +619,9 @@ public:
             wanted |= ChannelState::CanWrite;
         }
 
+        if (!mChannel) {
+            return;
+        }
         // Signal events that are already available now.
         ChannelState state = mChannel->state();
         ChannelState available = state & wanted;
@@ -585,8 +673,11 @@ private:
         signalState(state);
     }
 
-    // A RenderChannel pointer used for communication.
+    // A RenderChannel pointer used for communication. Null while the host GPU is
+    // released, when |mReleasedChannel| holds the channel's saved state.
     RenderChannelPtr mChannel;
+    std::unique_ptr<android::base::MemStream> mReleasedChannel;
+    uint32_t mVirtioGpuContextId = std::numeric_limits<uint32_t>::max();
 
     // Set to |true| if the pipe is in working state, |false| means we're not
     // initialized or the pipe is closed.
@@ -609,6 +700,38 @@ private:
 void registerPipeService() {
     android::AndroidPipe::Service::add(std::make_unique<EmuglPipe::Service>());
     registerGLProcessPipeService();
+}
+
+bool releasePipeChannels(std::string* error) {
+    (void)error;
+    std::lock_guard<std::mutex> lock(sPipesLock);
+    for (EmuglPipe* pipe : sPipes()) {
+        pipe->releaseChannel();
+    }
+    return true;
+}
+
+bool pipeChannelsReleased() {
+    std::lock_guard<std::mutex> lock(sPipesLock);
+    for (EmuglPipe* pipe : sPipes()) {
+        if (pipe->channelReleased()) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool retakePipeChannels(const gfxstream::RendererPtr& renderer, std::string* error) {
+    std::lock_guard<std::mutex> lock(sPipesLock);
+    bool ok = true;
+    for (EmuglPipe* pipe : sPipes()) {
+        std::string pipeError;
+        if (!pipe->retakeChannel(renderer, &pipeError)) {
+            *error = pipeError;
+            ok = false;
+        }
+    }
+    return ok;
 }
 
 void pipeSetRecvMode(int mode) {
