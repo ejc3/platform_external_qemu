@@ -4517,9 +4517,15 @@ static int do_gpu_release(ControlClient client, char* args) {
         return -1;
     }
     std::string error;
-    if (!android_gpuRelease(&error)) {
-        vmopers(client)->vmResume();
-        control_write(client, "KO: %s\r\n", error.c_str());
+    bool restored = true;
+    if (!android_gpuRelease(&error, &restored)) {
+        // Resume only a guest whose renderer is back as it was; otherwise it stays paused
+        // until a 'gpu retake' succeeds.
+        if (restored) {
+            vmopers(client)->vmResume();
+        }
+        control_write(client, "KO: %s%s\r\n", error.c_str(),
+                      restored ? "" : " (the guest stays paused)");
         return -1;
     }
     control_write(client, "released_ms=%lld\r\n", gpu_elapsed_ms(start));

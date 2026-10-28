@@ -1062,24 +1062,27 @@ bool android_gpuRetake(std::string* error) {
     return true;
 }
 
-bool android_gpuRelease(std::string* error) {
+bool android_gpuRelease(std::string* error, bool* restored) {
+    *restored = true;
     if (!sRenderer) {
         *error = "the emulator renders without a host GPU renderer";
         return false;
     }
     if (!sRenderer->beginGpuRelease(error)) {
+        // Nothing was released: beginGpuRelease() resumed what it paused.
         return false;
     }
     if (!android::opengl::releasePipeChannels(error) || !sRenderer->releaseGpu(error)) {
         // Bring the renderer back: the guest must find it as it left it.
         std::string retakeError;
         if (sRenderer->isGpuReleased()) {
-            if (!android_gpuRetake(&retakeError)) {
-                *error += "; taking the GPU up again also failed: " + retakeError;
-            }
+            *restored = android_gpuRetake(&retakeError);
         } else {
-            android::opengl::retakePipeChannels(sRenderer, &retakeError);
+            *restored = android::opengl::retakePipeChannels(sRenderer, &retakeError);
             sRenderer->resumeAll();
+        }
+        if (!*restored) {
+            *error += "; taking the GPU up again also failed: " + retakeError;
         }
         return false;
     }

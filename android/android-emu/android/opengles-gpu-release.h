@@ -20,14 +20,16 @@
 // channel in memory, stops the render threads, tears down the frame buffer and
 // the GL and Vulkan emulation, and unloads the host EGL and GLES libraries, so
 // the process holds no file descriptor or mapping of a GPU device. On failure
-// it takes the GPU up again and returns false with |error| set.
+// it takes the GPU up again and returns false with |error| set; |restored| says
+// whether that brought back the renderer and every channel, so the guest can
+// resume (otherwise it must stay paused for a 'gpu retake').
 //
 // android_gpuRetake() loads the host driver, initializes a frame buffer on the
 // GPU present now, loads the saved state into it, recreates every pipe's render
 // channel from its saved state and resumes the render threads.
 // C linkage: opengles.cpp defines its android_* functions in an extern "C" block.
 extern "C" {
-bool android_gpuRelease(std::string* error);
+bool android_gpuRelease(std::string* error, bool* restored);
 bool android_gpuRetake(std::string* error);
 bool android_gpuReleased();
 }
