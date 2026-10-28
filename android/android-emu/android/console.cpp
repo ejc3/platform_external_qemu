@@ -4516,6 +4516,19 @@ static int do_gpu_release(ControlClient client, char* args) {
         control_write(client, "KO: could not pause the guest\r\n");
         return -1;
     }
+    // The renderer's saved state carries no Vulkan objects without the VulkanSnapshots
+    // feature, so a guest with a Vulkan instance would lose them.
+    uint32_t vulkanInstances = 0;
+    vmopers(client)->vulkanInstanceEnumerate(&vulkanInstances, nullptr, nullptr);
+    if (vulkanInstances &&
+        !android::featurecontrol::isEnabled(android::featurecontrol::VulkanSnapshots)) {
+        vmopers(client)->vmResume();
+        control_write(client,
+                      "KO: the guest has %u Vulkan instance(s), which a release cannot carry "
+                      "without the VulkanSnapshots feature\r\n",
+                      vulkanInstances);
+        return -1;
+    }
     std::string error;
     bool restored = true;
     if (!android_gpuRelease(&error, &restored)) {
