@@ -708,6 +708,15 @@ static bool qemu_snapshot_remap(bool shared,
                                 void* opaque,
                                 LineConsumerCallback errConsumer) {
     android::RecursiveScopedVmLock vmlock;
+    if (android_gpuReleased()) {
+        static const char kErr[] =
+                "Snapshot RAM cannot be remapped: the host GPU is released. Run 'gpu retake' "
+                "first.\n";
+        if (errConsumer) {
+            errConsumer(opaque, kErr, sizeof(kErr) - 1);
+        }
+        return false;
+    }
 
     // We currently only support remap of the Quickboot snapshot,
     // and only if file-backed.
