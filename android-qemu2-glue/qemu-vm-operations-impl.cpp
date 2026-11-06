@@ -1133,8 +1133,17 @@ static void system_shutdown_request() {
     qemu_system_shutdown_request(SHUTDOWN_CAUSE_GUEST_SHUTDOWN);
 }
 
+// qmp_stop() refuses while a detached guest memory dump runs (the dump stopped the guest
+// itself and restarts it when it finishes): report that, or a caller such as 'gpu release'
+// would believe the guest stays paused until it resumes it.
 static bool vm_pause() {
-    qmp_stop(nullptr);
+    Error* err = nullptr;
+    qmp_stop(&err);
+    if (err) {
+        derror("could not pause the guest: %s", error_get_pretty(err));
+        error_free(err);
+        return false;
+    }
     return true;
 }
 
