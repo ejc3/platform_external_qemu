@@ -2992,14 +2992,22 @@ static int do_avd_snapshotpath(ControlClient client, char* args) {
     return 0;
 }
 
+// The dispatcher answers OK when a handler returns 0 and nothing otherwise, so a failure
+// writes its own KO: a client waits for one or the other.
 static int do_avd_pause(ControlClient client, char* args) {
-    bool success = vmopers(client)->vmPause();
-    return success ? 0 : -1;
+    if (!vmopers(client)->vmPause()) {
+        control_write(client, "KO: could not pause the guest\r\n");
+        return -1;
+    }
+    return 0;
 }
 
 static int do_avd_resume(ControlClient client, char* args) {
-    bool success = vmopers(client)->vmResume();
-    return success ? 0 : -1;
+    if (!vmopers(client)->vmResume()) {
+        control_write(client, "KO: could not resume the guest\r\n");
+        return -1;
+    }
+    return 0;
 }
 
 static int do_avd_hostmicon(ControlClient client, char* args) {
