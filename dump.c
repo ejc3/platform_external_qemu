@@ -80,6 +80,19 @@ uint64_t cpu_to_dump64(DumpState *s, uint64_t val)
     return val;
 }
 
+/*
+ * Test only: FCVM_DUMP_RESUME_DELAY_MS makes a detached dump wait that long between marking
+ * itself complete and starting the guest again, which widens that window for a test of what
+ * a pause during it does (fcvm's make phone-test). Unset, it waits for nothing.
+ */
+static void dump_test_resume_delay(void)
+{
+    const char *delay = getenv("FCVM_DUMP_RESUME_DELAY_MS");
+    if (delay && atoi(delay) > 0) {
+        g_usleep((gulong)atoi(delay) * 1000);
+    }
+}
+
 static int dump_cleanup(DumpState *s)
 {
     guest_phys_blocks_free(&s->guest_phys_blocks);
@@ -1876,6 +1889,9 @@ static void dump_process(DumpState *s, Error **errp)
     smp_wmb();
     atomic_set(&s->status,
                (local_err ? DUMP_STATUS_FAILED : DUMP_STATUS_COMPLETED));
+    if (s->detached) {
+        dump_test_resume_delay();
+    }
 
     /* send DUMP_COMPLETED message (unconditionally) */
     result = qmp_query_dump(NULL);
