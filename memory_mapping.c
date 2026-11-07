@@ -204,9 +204,12 @@ static void guest_phys_blocks_region_add(MemoryListener *listener,
     uint8_t *host_addr;
     GuestPhysBlock *predecessor;
 
-    /* we only care about RAM */
+    /* we only care about RAM; a user-backed region (the goldfish address space
+     * device's area) holds host memory its device maps in pieces on demand, and
+     * reading the parts it has not mapped faults, so it is not the guest's RAM */
     if (!memory_region_is_ram(section->mr) ||
-        memory_region_is_ram_device(section->mr)) {
+        memory_region_is_ram_device(section->mr) ||
+        memory_region_is_user_backed(section->mr)) {
         return;
     }
 
