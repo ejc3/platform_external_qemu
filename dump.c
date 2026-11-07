@@ -100,14 +100,9 @@ static int dump_cleanup(DumpState *s)
     close(s->fd);
     g_free(s->guest_note);
     s->guest_note = NULL;
+    /* the caller holds the iothread lock (dump_process takes it for a detached dump) */
     if (s->resume) {
-        if (s->detached) {
-            qemu_mutex_lock_iothread();
-        }
         vm_start();
-        if (s->detached) {
-            qemu_mutex_unlock_iothread();
-        }
     }
 
     return 0;
@@ -1885,6 +1880,16 @@ static void dump_process(DumpState *s, Error **errp)
         create_vmcore(s, &local_err);
     }
 
+    /*
+     * A detached dump ends and starts the guest again under the iothread lock, in one
+     * critical section: a pause (qmp_stop, the console's 'gpu release') either sees the
+     * dump still active and refuses, or runs after the guest is running again. Marked
+     * complete first and resumed later, a pause in between succeeded and the resume then
+     * started a guest its caller held paused (with its GPU released).
+     */
+    if (s->detached) {
+        qemu_mutex_lock_iothread();
+    }
     /* make sure status is written after written_size updates */
     smp_wmb();
     atomic_set(&s->status,
@@ -1904,6 +1909,9 @@ static void dump_process(DumpState *s, Error **errp)
 
     error_propagate(errp, local_err);
     dump_cleanup(s);
+    if (s->detached) {
+        qemu_mutex_unlock_iothread();
+    }
 }
 
 static void *dump_thread(void *data)
