@@ -10,6 +10,7 @@
 ** GNU General Public License for more details.
 */
 
+#include <chrono>
 #include "host-common/opengles.h"
 #include "android/opengles-overrides.h"
 #include "android/cmdline-definitions.h"
@@ -1048,19 +1049,41 @@ bool android_gpuReleased() {
            (sRenderer->isGpuReleased() || android::opengl::pipeChannelsReleased());
 }
 
+static std::string sRetakeTimings;
+
+std::string android_gpuRetakeTimings() {
+    return sRetakeTimings;
+}
+
 bool android_gpuRetake(std::string* error) {
     if (!sRenderer) {
         *error = "the emulator renders without a host GPU renderer";
         return false;
     }
+    using Clock = std::chrono::steady_clock;
+    auto ms = [](Clock::time_point from) {
+        return std::to_string(
+                std::chrono::duration_cast<std::chrono::milliseconds>(Clock::now() - from)
+                        .count());
+    };
+    std::string timings;
+    auto t = Clock::now();
     // A retake that failed after the renderer came back retries the channels alone.
-    if (sRenderer->isGpuReleased() && !sRenderer->retakeGpu(error)) {
-        return false;
+    if (sRenderer->isGpuReleased()) {
+        if (!sRenderer->retakeGpu(error)) {
+            return false;
+        }
+        timings = "renderer_ms=" + ms(t) + " " + sRenderer->lastRetakeTimings() + " ";
     }
+    t = Clock::now();
     if (!android::opengl::retakePipeChannels(sRenderer, error)) {
         return false;
     }
+    timings += "channels_ms=" + ms(t);
+    t = Clock::now();
     sRenderer->resumeAll();
+    timings += " resume_render_ms=" + ms(t);
+    sRetakeTimings = timings;
     return true;
 }
 

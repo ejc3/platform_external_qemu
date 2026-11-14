@@ -36,4 +36,7 @@ extern "C" {
 bool android_gpuRelease(std::string* error, bool* restored);
 bool android_gpuRetake(std::string* error);
 bool android_gpuReleased();
+// The last successful android_gpuRetake()'s parts in ms, as "name=ms" words: the renderer's
+// own (frame buffer window, configuration, state load) then the channels and the resume.
+std::string android_gpuRetakeTimings();
 }

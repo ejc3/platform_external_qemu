@@ -4567,11 +4567,13 @@ static int do_gpu_retake(ControlClient client, char* args) {
         return -1;
     }
     android_resetGuestPostedAFrame();
+    const auto resumeStart = std::chrono::steady_clock::now();
     if (!vmopers(client)->vmResume()) {
         control_write(client, "KO: could not resume the guest\r\n");
         return -1;
     }
-    control_write(client, "retaken_ms=%lld\r\n", gpu_elapsed_ms(start));
+    control_write(client, "retaken_ms=%lld %s vm_resume_ms=%lld\r\n", gpu_elapsed_ms(start),
+                  android_gpuRetakeTimings().c_str(), gpu_elapsed_ms(resumeStart));
     return 0;
 }
 
